@@ -1,6 +1,38 @@
 from typing import Callable
 import numpy as np
 import numpy.ma as ma
+import matplotlib.pyplot as plt
+
+
+def plot_torei(data, fname, ncols=4, nrows=4, s=1, alpha=0.5):
+    fig, axs = plt.subplots(ncols=ncols, nrows=nrows, subplot_kw={"projection": "3d"})
+    num_plots = ncols * nrows
+    azims = np.linspace(0, 360, num_plots // 2 + (num_plots % 2) + 1)[:-1]
+    elevs = np.linspace(-90, 90, num_plots // 2 + 1)[:-1]
+    view_angles = np.stack(np.meshgrid(azims, elevs), axis=-1).reshape(-1, 2)
+    for i, ax in enumerate(axs.flat):
+        ax.scatter(xs=data[:, 0], ys=data[:, 1], zs=data[:, 2], s=s, alpha=alpha)
+        ax.azim = view_angles[i, 0]
+        ax.elev = view_angles[i, 1]
+        ax.axis("off")
+    fig.savefig(fname)
+    return fig, axs
+
+
+def plot_samples_and_tiling(gridmodule, ratemaps, fname, ratemap_examples=0):
+    fig, axs = plt.subplots(ncols=2 + ratemap_examples)
+    gridmodule.plot(fig, axs[0])
+    axs[0].scatter(*gridmodule.phase_offsets.T, s=5, color="orange", zorder=2)
+    axs[0].axis("off")
+
+    for i, ratemap in enumerate(ratemaps[:ratemap_examples]):
+        axs[i + 1].imshow(ratemap, origin="lower")
+        axs[i + 1].axis("off")
+
+    axs[-1].imshow(np.around(np.sum(ratemaps, axis=0), decimals=10))
+    axs[-1].axis("off")
+    fig.savefig(fname)
+    return fig, axs
 
 
 def rotation_matrix(theta, degrees=True, **kwargs) -> np.ndarray:
@@ -32,7 +64,9 @@ def rotation_matrix(theta, degrees=True, **kwargs) -> np.ndarray:
     return np.array(((c, -s), (s, c)))
 
 
-def grid_cell(phase_offset, orientation_offset=0, f=1, non_negative = True, add=True, **kwargs) -> Callable:
+def grid_cell(
+    phase_offset, orientation_offset=0, f=1, non_negative=True, add=True, **kwargs
+) -> Callable:
     """
     Grid cell pattern constructed from three interacting 2D (plane) vectors
     with 60 degrees relative orientational offsets.
@@ -98,17 +132,19 @@ def grid_cell(phase_offset, orientation_offset=0, f=1, non_negative = True, add=
 
         activity = np.sum(np.cos((r - r0) @ ks.T), axis=-1)
         if non_negative:
-            activity = np.maximum(activity,0)
+            activity = np.maximum(activity, 0)
         else:
             # scale to [0,1]
-            activity = 2*(activity/3 + 0.5) / 3
+            activity = 2 * (activity / 3 + 0.5) / 3
         return activity
 
     return grid_cell_fn
 
 
 class GridModule:
-    def __init__(self, center, orientation_offset=0, f=1, non_negative = True, add=True, **kwargs):
+    def __init__(
+        self, center, orientation_offset=0, f=1, non_negative=True, add=True, **kwargs
+    ):
         self.center = center
         self.orientation_offset = orientation_offset
         self.f = f
@@ -133,25 +169,37 @@ class GridModule:
 
     def init_module(self, phase_offsets):
         self.phase_offsets = phase_offsets
-        self.grid_cell_fn = grid_cell(phase_offsets, self.orientation_offset, self.f, self.non_negative, self.add)
+        self.grid_cell_fn = grid_cell(
+            phase_offsets, self.orientation_offset, self.f, self.non_negative, self.add
+        )
 
     def __call__(self, r):
         return self.grid_cell_fn(r)
 
-    def sample_phase_offsets(self, n_samples):
+    def sample_minimal_phase_offsets(self, n_samples):
+        n_samples = n_samples - n_samples % 3  # make sure n_samples is divisible by 3
+        total_samples = np.zeros((n_samples, 2))
+        center_samples = self.inner_hexagon.sample(n_samples // 3)
+        for i, center_sample in enumerate(center_samples):
+            total_samples[i * 3 : (i + 1) * 3] = (
+                self.inner_hexagon.hpoints[::2] * 2 / 3 + center_sample
+            )
+        return total_samples
+
+    def sample_four_phase_offsets(self, n_samples):
         total_samples = np.zeros((n_samples, 2))
         center_samples = self.inner_hexagon.sample(n_samples // 4)
         total_samples[::4] = center_samples
         for i, center_sample in enumerate(center_samples):
             for j, hpoint in enumerate(self.inner_hexagon.hpoints[::2]):
-                total_samples[i*4 + j+1] = hpoint + center_sample
+                total_samples[i * 4 + j + 1] = hpoint + center_sample
         return total_samples
 
     def sample_phase_offsets_disk(self, N):
         # sample points within hexagon
         samples = np.zeros((N, 2))
         R = np.random.uniform(0, 1, N)
-        R_sqrt = R ** 0.5
+        R_sqrt = R**0.5
         R = R_sqrt * self.inner_radius
         Phi = np.random.uniform(0, 2 * np.pi, N)
         samples[:, 0] = R * np.cos(Phi)
@@ -159,11 +207,11 @@ class GridModule:
         return samples
 
     def plot(self, fig, ax):
-        self.inner_hexagon.plot(fig,ax)
-        self.outer_hexagon.plot(fig,ax)
-        self.edge_centered_hexagon.plot(fig,ax)
-        self.face_centered_hexagon.plot(fig,ax)
-        ax.scatter(*self.center)
+        self.inner_hexagon.plot(fig, ax)
+        self.outer_hexagon.plot(fig, ax)
+        # self.edge_centered_hexagon.plot(fig,ax)
+        # self.face_centered_hexagon.plot(fig,ax)
+        # ax.scatter(*self.center)
 
 
 class Hexagon:
@@ -211,14 +259,14 @@ class Hexagon:
             samples[i] = sample_square
         return samples
 
-    def plot(self,fig,ax,color='blue'):
+    def plot(self, fig, ax, color="blue"):
         hpoints = self.hpoints + self.center
         for i in range(len(hpoints)):
-            ax.plot(*hpoints[i:(i+2)].T,color=color)
+            ax.plot(*hpoints[i : (i + 2)].T, color=color)
         last_line = np.array([hpoints[-1], hpoints[0]])
-        ax.plot(*last_line.T,color=color)
+        ax.plot(*last_line.T, color=color)
 
-        ax.set_aspect('equal')
+        ax.set_aspect("equal")
         return fig, ax
 
 
