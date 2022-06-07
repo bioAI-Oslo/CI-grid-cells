@@ -5,39 +5,6 @@ import numpy.linalg as npl
 import matplotlib.pyplot as plt
 
 
-def scatter3d(data, ncols=4, nrows=4, s=1, alpha=0.5):
-    assert data.shape[-1] == 3, "data must have three axes. No more, no less."
-    if data.ndim > 2:
-        data = data.reshape(-1,3)
-    fig, axs = plt.subplots(ncols=ncols, nrows=nrows, subplot_kw={"projection": "3d"})
-    num_plots = ncols * nrows
-    azims = np.linspace(0, 360, num_plots // 2 + (num_plots % 2) + 1)[:-1]
-    elevs = np.linspace(-90, 90, num_plots // 2 + 1)[:-1]
-    view_angles = np.stack(np.meshgrid(azims, elevs), axis=-1).reshape(-1, 2)
-    for i, ax in enumerate(axs.flat):
-        ax.scatter(xs=data[:, 0], ys=data[:, 1], zs=data[:, 2], s=s, alpha=alpha)
-        ax.azim = view_angles[i, 0]
-        ax.elev = view_angles[i, 1]
-        ax.axis("off")
-    return fig, axs
-
-
-def plot_samples_and_tiling(gridmodule, ratemaps, fname, ratemap_examples=0):
-    fig, axs = plt.subplots(ncols=2 + ratemap_examples)
-    gridmodule.plot(fig, axs[0])
-    axs[0].scatter(*gridmodule.phase_offsets.T, s=5, color="orange", zorder=2)
-    axs[0].axis("off")
-
-    for i, ratemap in enumerate(ratemaps[:ratemap_examples]):
-        axs[i + 1].imshow(ratemap, origin="lower")
-        axs[i + 1].axis("off")
-
-    axs[-1].imshow(np.around(np.sum(ratemaps, axis=0), decimals=10))
-    axs[-1].axis("off")
-    fig.savefig(fname)
-    return fig, axs
-
-
 def rotation_matrix(theta, degrees=True, **kwargs) -> np.ndarray:
     """
     Creates a 2D rotation matrix for theta
@@ -66,6 +33,7 @@ def rotation_matrix(theta, degrees=True, **kwargs) -> np.ndarray:
     c, s = np.cos(theta), np.sin(theta)
     return np.array(((c, -s), (s, c)))
 
+
 def torus(R=1, r=0.5, n=100):
     """
     Generate a torus with radius R and inner radius r
@@ -76,17 +44,24 @@ def torus(R=1, r=0.5, n=100):
         r: radius of inner circle
         n: square root of number of points on torus
     """
-    theta = np.linspace(-np.pi,np.pi,n)#+np.pi/2
-    phi = np.linspace(-np.pi,np.pi,n)
-    x = (R + r*np.cos(theta[None]))*np.cos(phi[:,None])
-    y = (R + r*np.cos(theta[None]))*np.sin(phi[:,None])
-    z = r*np.sin(np.repeat(phi[None],n,axis=0))
-    coords = np.array([x,y,z]).T
+    theta = np.linspace(-np.pi, np.pi, n)  # +np.pi/2
+    phi = np.linspace(-np.pi, np.pi, n)
+    x = (R + r * np.cos(theta[None])) * np.cos(phi[:, None])
+    y = (R + r * np.cos(theta[None])) * np.sin(phi[:, None])
+    z = r * np.sin(np.repeat(phi[None], n, axis=0))
+    coords = np.array([x, y, z]).T
     return coords
 
 
 def grid_cell(
-    phase_offset, orientation_offset=0, f=1, rot_theta=60, n_comps = 3, non_negative=True, add=True, **kwargs
+    phase_offset,
+    orientation_offset=0,
+    f=1,
+    rot_theta=60,
+    n_comps=3,
+    non_negative=True,
+    add=True,
+    **kwargs
 ) -> Callable:
     """
     Grid cell pattern constructed from three interacting 2D (plane) vectors
@@ -122,7 +97,7 @@ def grid_cell(
 
     k1 = np.array([1.0, 0.0])  # init wave vector. unit length in x-direction
     k1 = init_R @ k1
-    ks = np.array([npl.matrix_power(relative_R,k) @ k1 for k in range(n_comps)])
+    ks = np.array([npl.matrix_power(relative_R, k) @ k1 for k in range(n_comps)])
     ks *= 2 * np.pi  # spatial angular frequency (unit-movement in space is one period)
     ks *= f  # user-defined spatial frequency
 
@@ -244,7 +219,7 @@ class GridModule:
             [Nx,Ny] array of bools.
         """
         mask = np.zeros(board.shape[:2], dtype=bool)
-        space_hexagon = Hexagon(1 / (2*self.f), self.orientation_offset, self.center)
+        space_hexagon = Hexagon(1 / (2 * self.f), self.orientation_offset, self.center)
         for i in range(board.shape[0]):
             for j in range(board.shape[1]):
                 mask[i, j] = space_hexagon.is_in_hexagon(board[i, j])
@@ -253,7 +228,9 @@ class GridModule:
     def masked_ratemaps(self, board):
         ratemaps = self(board)
         mask = self.period_mask(board)
-        return ma.masked_array(ratemaps, mask=np.repeat(~mask[None], ratemaps.shape[0], axis=0))
+        return ma.masked_array(
+            ratemaps, mask=np.repeat(~mask[None], ratemaps.shape[0], axis=0)
+        )
 
 
 class Hexagon:
@@ -346,14 +323,15 @@ def intersect(
 
     return u1 + solution[0] * v1, False
 
-def get_intervals(pdiag,feat_list):
+
+def get_intervals(pdiag, feat_list):
     top_features = {}
     for i in range(len(feat_list)):
-        temp_feat = np.sort(pdiag[i][:,1]-pdiag[i][:,0])
+        temp_feat = np.sort(pdiag[i][:, 1] - pdiag[i][:, 0])
         top_features[str(i)] = []
         for j in range(feat_list[i]):
             try:
-                top_features[str(i)].append(temp_feat[-1-j])
+                top_features[str(i)].append(temp_feat[-1 - j])
             except:
                 top_features[str(i)].append(0)
     return top_features
