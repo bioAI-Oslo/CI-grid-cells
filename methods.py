@@ -65,6 +65,24 @@ def rotation_matrix(theta, degrees=True, **kwargs) -> np.ndarray:
     c, s = np.cos(theta), np.sin(theta)
     return np.array(((c, -s), (s, c)))
 
+def torus(R=1, r=0.5, n=100):
+    """
+    Generate a torus with radius R and inner radius r
+    R > r => ring-torus (standard), R = r => Horn-torus, R < r => Spindel-torus
+
+    params:
+        R: radius of outer circle
+        r: radius of inner circle
+        n: square root of number of points on torus
+    """
+    theta = np.linspace(-np.pi,np.pi,n)#+np.pi/2
+    phi = np.linspace(-np.pi,np.pi,n)
+    x = (R + r*np.cos(theta[None]))*np.cos(phi[:,None])
+    y = (R + r*np.cos(theta[None]))*np.sin(phi[:,None])
+    z = r*np.sin(np.repeat(phi[None],n,axis=0))
+    coords = np.array([x,y,z]).T
+    return coords
+
 
 def grid_cell(
     phase_offset, orientation_offset=0, f=1, non_negative=True, add=True, **kwargs
