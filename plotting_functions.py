@@ -5,11 +5,11 @@ from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
 
 
-def scatter3d(data, ncols=4, nrows=4, s=1, alpha=0.5):
+def scatter3d(data, ncols=4, nrows=4, s=1, alpha=0.5, **kwargs):
     assert data.shape[-1] == 3, "data must have three axes. No more, no less."
     if data.ndim > 2:
         data = data.reshape(-1, 3)
-    fig, axs = plt.subplots(ncols=ncols, nrows=nrows, subplot_kw={"projection": "3d"})
+    fig, axs = plt.subplots(ncols=ncols, nrows=nrows, subplot_kw={"projection": "3d"}, **kwargs)
     num_plots = ncols * nrows
     azims = np.linspace(0, 360, num_plots // 2 + (num_plots % 2) + 1)[:-1]
     elevs = np.linspace(-90, 90, num_plots // 2 + 1)[:-1]
