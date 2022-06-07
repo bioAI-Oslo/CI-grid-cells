@@ -1,6 +1,7 @@
 from typing import Callable
 import numpy as np
 import numpy.ma as ma
+import numpy.linalg as npl
 import matplotlib.pyplot as plt
 
 
@@ -85,7 +86,7 @@ def torus(R=1, r=0.5, n=100):
 
 
 def grid_cell(
-    phase_offset, orientation_offset=0, f=1, non_negative=True, add=True, **kwargs
+    phase_offset, orientation_offset=0, f=1, rot_theta=60, n_comps = 3, non_negative=True, add=True, **kwargs
 ) -> Callable:
     """
     Grid cell pattern constructed from three interacting 2D (plane) vectors
@@ -116,15 +117,12 @@ def grid_cell(
     >>> gc(x)
     3.0
     """
-    rot_theta = 60  # degrees
     relative_R = rotation_matrix(rot_theta)
     init_R = rotation_matrix(orientation_offset, **kwargs)
 
     k1 = np.array([1.0, 0.0])  # init wave vector. unit length in x-direction
     k1 = init_R @ k1
-    k2 = relative_R @ k1  # rotate k1 by 60degrees using R
-    k3 = relative_R @ k2  # rotate k2 by 60degrees using R
-    ks = np.array([k1, k2, k3])
+    ks = np.array([npl.matrix_power(relative_R,k) @ k1 for k in range(n_comps)])
     ks *= 2 * np.pi  # spatial angular frequency (unit-movement in space is one period)
     ks *= f  # user-defined spatial frequency
 
@@ -347,3 +345,15 @@ def intersect(
         return u1 + solution[0] * v1, True
 
     return u1 + solution[0] * v1, False
+
+def get_intervals(pdiag,feat_list):
+    top_features = {}
+    for i in range(len(feat_list)):
+        temp_feat = np.sort(pdiag[i][:,1]-pdiag[i][:,0])
+        top_features[str(i)] = []
+        for j in range(feat_list[i]):
+            try:
+                top_features[str(i)].append(temp_feat[-1-j])
+            except:
+                top_features[str(i)].append(0)
+    return top_features
