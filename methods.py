@@ -4,7 +4,10 @@ import numpy.ma as ma
 import matplotlib.pyplot as plt
 
 
-def plot_torei(data, fname, ncols=4, nrows=4, s=1, alpha=0.5):
+def scatter3d(data, ncols=4, nrows=4, s=1, alpha=0.5):
+    assert data.shape[-1] == 3, "data must have three axes. No more, no less."
+    if data.ndim > 2:
+        data = data.reshape(-1,3)
     fig, axs = plt.subplots(ncols=ncols, nrows=nrows, subplot_kw={"projection": "3d"})
     num_plots = ncols * nrows
     azims = np.linspace(0, 360, num_plots // 2 + (num_plots % 2) + 1)[:-1]
@@ -15,7 +18,6 @@ def plot_torei(data, fname, ncols=4, nrows=4, s=1, alpha=0.5):
         ax.azim = view_angles[i, 0]
         ax.elev = view_angles[i, 1]
         ax.axis("off")
-    fig.savefig(fname)
     return fig, axs
 
 
@@ -212,6 +214,30 @@ class GridModule:
         # self.edge_centered_hexagon.plot(fig,ax)
         # self.face_centered_hexagon.plot(fig,ax)
         # ax.scatter(*self.center)
+
+    def period_mask(self, board):
+        """
+        Return a mask of the board where the grid module is periodic.
+        Parameters
+        ----------
+        board : np.ndarray
+            [Nx,Ny,2] array of floats.
+        Returns
+        -------
+        mask : np.ndarray
+            [Nx,Ny] array of bools.
+        """
+        mask = np.zeros(board.shape[:2], dtype=bool)
+        space_hexagon = Hexagon(1 / (2*self.f), self.orientation_offset, self.center)
+        for i in range(board.shape[0]):
+            for j in range(board.shape[1]):
+                mask[i, j] = space_hexagon.is_in_hexagon(board[i, j])
+        return mask
+
+    def masked_ratemaps(self, board):
+        ratemaps = self(board)
+        mask = self.period_mask(board)
+        return ma.masked_array(ratemaps, mask=np.repeat(~mask[None], ratemaps.shape[0], axis=0))
 
 
 class Hexagon:
