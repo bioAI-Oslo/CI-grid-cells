@@ -289,6 +289,83 @@ class Hexagon:
         return fig, ax
 
 
+class SquareGridModule:
+    def __init__(self, center, orientation_offset, f, non_negative, add):
+        self.center = center
+        self.f = f
+        self.orientation_offset = orientation_offset
+        self.non_negative = non_negative
+        self.add = add
+
+        # define module outer hexagon
+        self.outer_radius = 1 / f
+        self.inner_radius = self.outer_radius / 2
+
+        self.inner_square = Square(
+            self.inner_radius, self.orientation_offset, self.center
+        )
+        self.outer_square = Square(
+            self.outer_radius, self.orientation_offset, self.center
+        )
+
+        self.phase_offsets = None
+
+    def init_module(self, phase_offsets):
+        self.phase_offsets = phase_offsets
+        self.grid_cell_fn = grid_cell(
+            phase_offset=phase_offsets,
+            orientation_offset=self.orientation_offset,
+            f=self.f,
+            rot_theta=90,
+            n_comps=2,
+            non_negative=self.non_negative,
+            add=self.add,
+        )
+
+    def __call__(self, r):
+        return self.grid_cell_fn(r)
+
+    def plot(self, fig=None, ax=None):
+        if fig is None or ax is None:
+            fig, ax = plt.subplots()
+        self.inner_square.plot(fig, ax)
+        self.outer_square.plot(fig, ax)
+        if self.phase_offsets is not None:
+            ax.scatter(*self.phase_offsets.T)
+        return fig, ax
+
+
+class Square:
+    def __init__(self, radius, orientation_offset, center):
+        self.radius = radius
+        self.orientation_offset = orientation_offset
+        self.center = center
+        self.area = radius * radius
+
+        # create hexagonal points
+        rotmat90 = rotation_matrix(90, degrees=True)
+        rotmat_offset = rotation_matrix(orientation_offset, degrees=True)
+        hpoints = np.array([radius, radius])  # start vector along diagonal
+        hpoints = rotmat_offset @ hpoints
+        hpoints = [hpoints]
+        for _ in range(3):
+            hpoints.append(rotmat90 @ hpoints[-1])
+        self.hpoints = np.array(hpoints)
+
+    def sample(self, N):
+        return np.random.uniform(-self.radius, self.radius, (N, 2))
+
+    def plot(self, fig, ax, color="blue"):
+        hpoints = self.hpoints + self.center
+        for i in range(len(hpoints)):
+            ax.plot(*hpoints[i : (i + 2)].T, color=color)
+        last_line = np.array([hpoints[-1], hpoints[0]])
+        ax.plot(*last_line.T, color=color)
+
+        ax.set_aspect("equal")
+        return fig, ax
+
+
 def intersect(
     u1, v1, u2, v2, constraint1=[-np.inf, np.inf], constraint2=[-np.inf, np.inf]
 ):
