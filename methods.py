@@ -336,8 +336,8 @@ class SquareGridModule:
             fig, ax = plt.subplots()
         self.inner_square.plot(fig, ax)
         self.outer_square.plot(fig, ax)
-        if self.phase_offsets is not None:
-            ax.scatter(*self.phase_offsets.T)
+        #if self.phase_offsets is not None:
+        #    ax.scatter(*self.phase_offsets.T)
         return fig, ax
 
 

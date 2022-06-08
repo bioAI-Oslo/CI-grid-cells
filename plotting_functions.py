@@ -24,8 +24,8 @@ def scatter3d(data, ncols=4, nrows=4, s=1, alpha=0.5, azim_elev_title=True, **kw
     return fig, axs
 
 
-def plot_samples_and_tiling(gridmodule, ratemaps, ratemap_examples=0):
-    fig, axs = plt.subplots(ncols=2 + ratemap_examples)
+def plot_samples_and_tiling(gridmodule, ratemaps, ratemap_examples=0, **kwargs):
+    fig, axs = plt.subplots(ncols=2 + ratemap_examples, **kwargs)
     gridmodule.plot(fig, axs[0])
     axs[0].scatter(*gridmodule.phase_offsets.T, s=5, color="orange", zorder=2)
     axs[0].axis("off")
@@ -34,7 +34,7 @@ def plot_samples_and_tiling(gridmodule, ratemaps, ratemap_examples=0):
         axs[i + 1].imshow(ratemap, origin="lower")
         axs[i + 1].axis("off")
 
-    axs[-1].imshow(np.around(np.sum(ratemaps, axis=0), decimals=10))
+    axs[-1].imshow(np.around(np.sum(ratemaps, axis=0), decimals=10), origin='lower')
     axs[-1].axis("off")
     #fig.savefig(fname)
     return fig, axs
