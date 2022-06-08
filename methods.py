@@ -163,7 +163,13 @@ class GridModule:
     def init_module(self, phase_offsets):
         self.phase_offsets = phase_offsets
         self.grid_cell_fn = grid_cell(
-            phase_offsets, self.orientation_offset, self.f, self.non_negative, self.add
+            phase_offset=phase_offsets,
+            orientation_offset=self.orientation_offset,
+            f=self.f,
+            rot_theta=60,
+            n_comps=3,
+            non_negative=self.non_negative,
+            add=self.add,
         )
 
     def __call__(self, r):
