@@ -134,22 +134,116 @@ def grid_cell(
     return grid_cell_fn
 
 
+"""
+    For hexagonal grid cells we can use the lattice constant of the 
+    hexagonal lattice that is formed by the ratemaps maxima as a more
+    intuitive way of parameterizing the pattern for generation.
+"""
+
+def hex_grid_cell(
+    phase_offset,
+    orientation_offset=0,
+    a=1, # lattice constant
+    non_negative=True,
+    add=True,
+    **kwargs
+) -> Callable:
+    """
+    Grid cell pattern constructed from three interacting 2D (plane) vectors
+    with 60 degrees relative orientational offsets.
+    See e.g. the paper: "From grid cells to place cells: A mathematical model"
+    - Moser & Einevoll 2005
+    Parameters
+    ----------
+    phase_offset : np.ndarray
+        2D-array. Spatial (vector) phase offset of the grid pattern. Note that
+        the grid pattern is np.array([f,f])-periodic, so phase-offsets are also
+        f-periodic
+    orientation_offset : float
+        First plane vector is default along the cardinal x-axis. Phase-offset
+        turns this plane vector counter clockwise (default in degrees, but
+        can use **kwargs - degrees=False to use radians)
+    f : float
+        Spatial frequency / periodicity. f=1 makes the grid cell unit-periodic
+    Returns
+    -------
+    grid_cell_fn : function
+        A grid cell function which can be evaluated at locations r
+    Examples
+    --------
+    >>> import numpy as np
+    >>> x = np.zeros(2)
+    >>> gc = grid_cell()
+    >>> gc(x)
+    3.0
+    """
+
+    # the ratemap maxima pattern is rotated against the k1 by about 30 deg
+    # to correct for zero orientation w.r.t the actual pattern instead of
+    # the generators, we need to correct the orientation_offset by these 30 deg
+    relative_R = rotation_matrix(60., degrees=True)
+    init_R = rotation_matrix(orientation_offset - 30., degrees=True, **kwargs)
+
+    k1 = np.array([1.0, 0.0])  # init wave vector. unit length in x-direction
+    k1 = init_R @ k1
+    ks = np.array([npl.matrix_power(relative_R, k) @ k1 for k in range(3)])
+    ks *= 2 * np.pi  # spatial angular frequency (unit-movement in space is one period)
+
+    # translate user-defined lattice constant a into spatial frequency for 
+    # the generating plane waves
+    # a_GC = 1 / (f*cos(30.)) = 2 / (f*sqrt(3))
+    # -> f = 2 / (a*sqrt(3))
+    ks *= 2 / (a*np.sqrt(3)) # user-defined spatial frequency
+
+    def grid_cell_fn(r):
+        """
+        Grid cell function with fixed parameters given by outer function. I.e.
+        a mapping from some spatial coordinates r to grid cell activity.
+        Parameters
+        ----------
+        r : np.ndarray
+            [1,2 or 3]D array. For a 3D array, the shape is typically (Ng,Ng,2).
+            A tensor of 2D-spatial coordinates.
+        Returns:
+        grid_cell_activity: np.ndarray or float
+            [0,1 or 2]D array. For a 2D array, the shape is typically (Ng,Ng).
+            The activity of this grid cell across all spatial coordinates in
+            the grid (Ng,Ng).
+        """
+        r0 = phase_offset
+        if r0.ndim == 2 and r.ndim > 2:
+            for i in range(1, r.ndim):
+                r0 = r0[:, None]
+        if not add:
+            return np.cos((r - r0) @ ks.T)
+
+        activity = np.sum(np.cos((r - r0) @ ks.T), axis=-1)
+        if non_negative:
+            activity = np.maximum(activity, 0)
+        else:
+            # scale to [0,1]
+            activity = 2 * (activity / 3 + 0.5) / 3
+        return activity
+
+    return grid_cell_fn
+
+
 class GridModule:
     def __init__(
-        self, center, orientation_offset=0, f=1, non_negative=True, add=True, **kwargs
+        self, center, orientation_offset=0, a=1, non_negative=True, add=True, **kwargs
     ):
         self.center = center
         self.orientation_offset = orientation_offset
-        self.f = f
+        self.a = a
         self.non_negative = non_negative
         self.add = add
 
         # define module outer hexagon
-        self.outer_radius = 1 / f
+        self.outer_radius = self.a
         self.outer_hexagon = Hexagon(self.outer_radius, orientation_offset, center)
         # define module inner hexagon based on minimum enclosing circle of Wigner-Seitz cell
         # of a hexagonal lattice with 30 degrees orientation offset to the outer hexagon
-        self.inner_radius = 1 / (2 * f * np.cos(np.pi / 6))
+        self.inner_radius = self.a / np.sqrt(3)
         self.inner_hexagon = Hexagon(self.inner_radius, orientation_offset + 30, center)
 
         # define phase offsets of minimal grid module for tiling space?
@@ -165,9 +259,7 @@ class GridModule:
         self.grid_cell_fn = grid_cell(
             phase_offset=phase_offsets,
             orientation_offset=self.orientation_offset,
-            f=self.f,
-            rot_theta=60,
-            n_comps=3,
+            a=self.a,
             non_negative=self.non_negative,
             add=self.add,
         )
