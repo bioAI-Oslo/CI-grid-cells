@@ -34,7 +34,7 @@ def rotation_matrix(theta, degrees=True, **kwargs) -> np.ndarray:
     return np.array(((c, -s), (s, c)))
 
 
-def torus(R=1, r=0.5, n=100):
+def torus(R=1, r=0.5, alpha=0, beta=0, n=100, a=1, b=1):
     """
     Generate a torus with radius R and inner radius r
     R > r => ring-torus (standard), R = r => Horn-torus, R < r => Spindel-torus
@@ -43,12 +43,18 @@ def torus(R=1, r=0.5, n=100):
         R: radius of outer circle
         r: radius of inner circle
         n: square root of number of points on torus
+        alpha: outer circle twist parameter wrt. inner circle. (twisted torus)
+        beta: inner circle twist parameter wrt. outer circle. (unknown)
     """
-    theta = np.linspace(-np.pi, np.pi, n)  # +np.pi/2
-    phi = np.linspace(-np.pi, np.pi, n)
-    x = (R + r * np.cos(theta[None])) * np.cos(phi[:, None])
-    y = (R + r * np.cos(theta[None])) * np.sin(phi[:, None])
-    z = r * np.sin(np.repeat(phi[None], n, axis=0))
+    theta = np.linspace(-a * np.pi, a * np.pi, n)  # +np.pi/2
+    phi = np.linspace(-b * np.pi, b * np.pi, n)
+    x = (R + r * np.cos(theta[None] - alpha * phi[:, None])) * np.cos(
+        phi[:, None] - beta * theta[None]
+    )
+    y = (R + r * np.cos(theta[None] - alpha * phi[:, None])) * np.sin(
+        phi[:, None] - beta * theta[None]
+    )
+    z = r * np.sin(theta[None] - alpha * phi[:, None])
     coords = np.array([x, y, z]).T
     return coords
 
@@ -198,7 +204,7 @@ class GridModule:
         # sample points within hexagon
         samples = np.zeros((N, 2))
         R = np.random.uniform(0, 1, N)
-        R_sqrt = R**0.5
+        R_sqrt = R ** 0.5
         R = R_sqrt * self.inner_radius
         Phi = np.random.uniform(0, 2 * np.pi, N)
         samples[:, 0] = R * np.cos(Phi)
@@ -212,9 +218,35 @@ class GridModule:
         # self.face_centered_hexagon.plot(fig,ax)
         # ax.scatter(*self.center)
 
-    def period_mask(self, board):
+    def period_mask(self, board, center_board_pixels=False):
         """
         Return a mask of the board where the grid module is periodic.
+        Parameters
+        ----------
+        board : np.ndarray
+            [Nx,Ny,2] array of floats.
+        Returns
+        -------
+        mask : np.ndarray
+            [Nx,Ny] array of bools.
+        """
+        mask = np.zeros(board.shape[:2], dtype=bool)
+        pixel_center_x = (board[0, 1, 0] - board[0, 0, 0]) / 2
+        pixel_center_y = (board[1, 0, 1] - board[0, 0, 1]) / 2
+        pixel_center = np.array([pixel_center_x, pixel_center_y])
+        board = board + pixel_center if center_board_pixels else board
+        for i in range(board.shape[0]):
+            for j in range(board.shape[1]):
+                mask[i, j] = self.inner_hexagon.is_in_hexagon(board[i, j])
+        return mask
+
+    def period_mask_DEPRECATED(self, board):
+        """
+        Return a mask of the board where the grid module is periodic.
+
+        OBS! This is a hexagon with hpoints half the distance to the outer hexagon.
+        This is not the periodic (unit) cell. The periodic cell is the wigner setiz cell
+
         Parameters
         ----------
         board : np.ndarray
@@ -252,6 +284,9 @@ class Hexagon:
         hpoints = np.array([radius, 0])  # start vector along cardinal x-axis
         hpoints = rotmat_offset @ hpoints
         hpoints = [hpoints]
+        #attempt to use inner hexagonal circle instead
+        #hpoints = (rotmat60 @ hpoints[0] - hpoints[0]) / 2 + hpoints[0]
+        #hpoints = [hpoints]
         for _ in range(5):
             hpoints.append(rotmat60 @ hpoints[-1])
         self.hpoints = np.array(hpoints)
@@ -336,7 +371,7 @@ class SquareGridModule:
             fig, ax = plt.subplots()
         self.inner_square.plot(fig, ax)
         self.outer_square.plot(fig, ax)
-        #if self.phase_offsets is not None:
+        # if self.phase_offsets is not None:
         #    ax.scatter(*self.phase_offsets.T)
         return fig, ax
 
