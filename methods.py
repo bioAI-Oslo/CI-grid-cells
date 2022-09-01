@@ -262,7 +262,7 @@ class GridModule:
 
     def init_module(self, phase_offsets):
         self.phase_offsets = phase_offsets
-        self.grid_cell_fn = grid_cell(
+        self.grid_cell_fn = hex_grid_cell(
             phase_offset=phase_offsets,
             orientation_offset=self.orientation_offset,
             a=self.a,
