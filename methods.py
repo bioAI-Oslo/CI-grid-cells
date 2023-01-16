@@ -133,15 +133,16 @@ class HexagonalGCs(torch.nn.Module):
         ks = torch.tensor(ks, dtype=dtype)
         self.ks = ks * f * 2 * np.pi
         # define unit cell from generating pattern
-        self.inner_hexagon = Hexagon(f*2/3, init_rot, np.zeros(2))
+        self.unit_cell = Hexagon(f*2/3, init_rot, np.zeros(2))
         # self.inner_hexagon = Hexagon(f / np.sqrt(3), init_rot - 30, np.zeros(2))
         # init trainable phases
-        phases = self.inner_hexagon.sample(ncells)
+        phases = self.unit_cell.sample(ncells)
         self.phases = torch.nn.Parameter(
             torch.tensor(phases, dtype=dtype, requires_grad=True)
         )
         self.relu = torch.nn.ReLU()
         self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        self.decoder = None
 
     def forward(self, r, rectify=False):
         """
@@ -182,6 +183,10 @@ class HexagonalGCs(torch.nn.Module):
         """
         det = torch.linalg.det(torch.transpose(J, -2, -1) @ J)
         return torch.sqrt(det) if sqrt else det
+    
+    def linear_decoder(self,r,train=False):
+        if self.decoder is None or train:
+            self.decoder = 
 
     def loss_fn(self, r):
         """
