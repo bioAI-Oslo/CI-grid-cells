@@ -53,57 +53,43 @@ class Hexagon:
             samples[i] = sample_square
         return samples
 
-    def wrap(self, x, hexagon=None):
+    def wrap(self, xs, hexagon=None):
+        """
+        Loops nsamples of x to the _wrap function.
+        
+        Parameters:
+            x (nsamples, 2): sequence of 2D arrays giving 2D positions.
+        """
+        return np.array([self._wrap(x) for x in xs])
+    
+    def _wrap(self, x, hexagon=None):
         """
         Simple wrapping method that draws hexagons surrounding the
         vector x. The final hexagon containing the end point of the vector x
         gives the wrapped location of x as: x - origin
+        
+        Parameters:
+            x (2,): 2D np.ndarray giving a position in 2D space
+            hexagon: object of this class - should not be specified by user, but
+                     it is used by this method during recursion.
         """
         hexagon = copy.deepcopy(self) if hexagon is None else hexagon
         if hexagon.is_in_hexagon(x):
             return x - hexagon.center
         hexdrant = np.argmax(hexagon.basis @ (x - hexagon.center))
         hexagon.center += 2*hexagon.basis[hexdrant]
-        return self.wrap(x, hexagon)
-
-    def wrap2(self, x, origin=None, count=0):
+        return self._wrap(x, hexagon)
+    
+    def geodesic(self,p1,p2):
         """
-        Recursive method for wrapping a vector x along this hexagon object.
-
         Parameters:
-            x (2,): 2D "position" vector
-            origin (2,): origin of the x-vector - used for recurrence. Usage
-                         assumes self.center to start (i.e. None)
-
-        Returns:
-            new_x (2,): wrapped x
+            p1,p2 (nsamples,2): nsamples of 2D vectors
         """
-        if origin is None:
-            origin = self.center
-        x = x - origin
-        phi = np.arctan2(*x[::-1]) * 180 / np.pi
-        # quadrant, but for a hexagon
-        hexdrant = int((phi - self.orientation_offset) // 60)
-        # line segment of hexdrant
-        u = self.hpoints[hexdrant]
-        v = self.hpoints[hexdrant + 1] - u
-        # find exit point
-        p, do_intersect = intersect(
-            u, v, origin, x, constraint1=[0, 1], constraint2=[0, 1]
-        )
-        if not do_intersect:
-            # hexagon wall and x do not intersect. In other words, x is
-            # within the hexagon, and no more wrapping is needed.
-            return x, count
-        # find reenter point
-        t = np.linalg.norm(p - u) / np.linalg.norm(v)
-        opposite_hexdrant = (hexdrant + 3) % 5
-        wrap_u = self.hpoints[opposite_hexdrant]
-        wrap_v = self.hpoints[opposite_hexdrant + 1] - wrap_u
-        wrap_p = wrap_u + (1 - t) * wrap_v
-        # subtract vector leaving the unit cell
-        new_x = x - p
-        return self.wrap(new_x, origin=-wrap_p, count=count + 1)
+        p1 = self.wrap(p1)
+        p2 = self.wrap(p2)
+        p2 = np.concatenate([p2[:,None], p2[:,None] - 2*self.basis[None]], axis=1) # (nsamples,7,2)
+        dist = np.linalg.norm(p2-p1[:,None],axis=-1) # (nsamples,7)
+        return np.min(dist,axis=-1)
 
     def plot(self, fig, ax, center=None, color="blue"):
         center = self.center if center is None else center
@@ -133,15 +119,16 @@ class HexagonalGCs(torch.nn.Module):
         ks = torch.tensor(ks, dtype=dtype)
         self.ks = ks * f * 2 * np.pi
         # define unit cell from generating pattern
-        self.inner_hexagon = Hexagon(f*2/3, init_rot, np.zeros(2))
+        self.unit_cell = Hexagon(f*2/3, init_rot, np.zeros(2))
         # self.inner_hexagon = Hexagon(f / np.sqrt(3), init_rot - 30, np.zeros(2))
         # init trainable phases
-        phases = self.inner_hexagon.sample(ncells)
+        phases = self.unit_cell.sample(ncells)
         self.phases = torch.nn.Parameter(
             torch.tensor(phases, dtype=dtype, requires_grad=True)
         )
         self.relu = torch.nn.ReLU()
         self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        self.decoder = None
 
     def forward(self, r, rectify=False):
         """
@@ -182,6 +169,20 @@ class HexagonalGCs(torch.nn.Module):
         """
         det = torch.linalg.det(torch.transpose(J, -2, -1) @ J)
         return torch.sqrt(det) if sqrt else det
+    
+    def decode(self,activity):
+        """
+        Optimal linear decoding
+        """
+        if self.decoder is None :
+            raise Exception("Must train decoder first, use train_decoder(r)!")
+        return activity@self.decoder
+    
+    def train_decoder(self, r, **kwargs):
+        # least squares
+        X = self(r,**kwargs)
+        self.decoder = torch.linalg.inv((X.T@X))@X.T@r
+        return self.decoder
 
     def loss_fn(self, r):
         """

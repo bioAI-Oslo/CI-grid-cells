@@ -19,30 +19,6 @@ def create_board(nx=1, ny=None, res=64, to_torch_tensor=True):
     return board
 
 
-def rhombus_transform(rs, theta=60, degrees=True):
-    """
-    Assume rs are in rhombus basis. Then we can inversely transform those
-    coordinates to the standard basis. This can be useful for e.g. meshing
-    a rhombus and transforming the mesh to the standard basis afterwards.
-
-    Parameters:
-        rs (nsamples,2): array of 2d-vectors in cardinal basis to transform
-        theta: (float) indicating the angle of the second basis vector e2
-               relative to e1.
-        degrees: (boolean) whether theta is in degrees or radians
-    Returns:
-        rs (nsamples,2): in rhombus coordinates
-    """
-    rotmat = rotation_matrix(theta, degrees)
-    e1 = np.array([1, 0])
-    e2 = rotmat @ e1
-    # to rhombus coordinates
-    basis_change = np.stack([e1, e2])
-    # from rhombus coordinates to standard basis
-    basis_change = np.linalg.inv(basis_change)
-    return rs @ basis_change.T
-
-
 def rotation_matrix(theta, degrees=True, **kwargs) -> np.ndarray:
     """
     Creates a 2D rotation matrix for theta
@@ -130,3 +106,35 @@ def torus(R=1, r=0.5, alpha=0, beta=0, n=100, a=1, b=1):
     z = r * np.sin(theta[None] - alpha * phi[:, None])
     coords = np.array([x, y, z]).T
     return coords
+
+def intersect_vectorized(
+    u1, v1, u2, v2, constraint1=[-np.inf, np.inf], constraint2=[-np.inf, np.inf]
+):
+    """
+    Calculate intersection of two line segments defined as:
+    l1 = {u1 + t1*v1 : u1,v1 in R^n, t1 in constraint1 subseq R},
+    l2 = {u2 + t2*v2 : u2,v2 in R^n, t2 in constraint2 subseq R}
+    Args:
+        u1 (n,2) : bias of first line-segment
+        v1 (n,2) : "slope" of first line-segment
+        u2 (n,2) : bias of second line-segment
+        v2 (n,2) : "slope" of first line-segment
+        constraint1: 2d-array(like) of boundary points
+                     for the "t-values" of the first line-segment
+        constraint1: 2d-array(like) of boundary points
+                     for the "t-values" of the second line-segment
+    Returns:
+        intersection (n,2) : point of intersection of the two line segments
+        within_constraints (n,) : mask of which line segments intersects within constraints
+    """
+    matrix = np.stack([v1, -v2],axis=1)
+    vector = u2 - u1
+    try:
+        solution = np.linalg.solve(matrix, vector)
+    except np.linalg.LinAlgError as e:
+        # Singular matrix (parallell line segments)
+        print(e)
+        return None, False
+    
+    within_constraints = (constraint1[0] <= solution[0] <= constraint1[1]) and (constraint2[0] <= solution[1] <= constraint2[1])
+    return u1+solution[:,:1]*v1, within_constraints

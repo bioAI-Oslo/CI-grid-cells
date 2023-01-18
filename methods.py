@@ -13,9 +13,9 @@ class Hexagon:
         self.area = 3 * np.sqrt(3) * radius * radius / 2
         # create hexagonal points
         rotmat60 = rotation_matrix(60, degrees=True)
-        rotmat_offset = rotation_matrix(orientation_offset, degrees=True)
+        self.rotmat_offset = rotation_matrix(orientation_offset, degrees=True)
         hpoints = np.array([radius, 0])  # start vector along cardinal x-axis
-        hpoints = rotmat_offset @ hpoints
+        hpoints = self.rotmat_offset @ hpoints
         hpoints = [hpoints]
         for _ in range(5):
             hpoints.append(rotmat60 @ hpoints[-1])
@@ -24,86 +24,112 @@ class Hexagon:
         for i in range(6):
             self.basis[i] = (hpoints[i] + hpoints[(i + 1) % 6]) / 2
 
-    def is_in_hexagon(self, point):
+    def is_in_hexagon(self, rs):
         """
-        Check if a 2d-point is within a hexagon defined by its 6
-        points 'hpoints' with phase 'center'.
+        Check if a set of points rs is within hexagon.
+
+        Parameters:
+            rs (nsamples,2): points to check if are inside hexagon
+        Returns:
+            in_hexagon (nsamples,): mask array
         """
-        u2, v2 = self.center, point - self.center
-        hpoints = self.hpoints + self.center
-        for i in range(6):
-            # loop each hexagonal side/edge
-            u1 = hpoints[i]
-            v1 = hpoints[(i + 1) % 6] - u1
-            _, intersect_inside_hexagon = intersect(
-                u1, v1, u2, v2, constraint1=[0, 1], constraint2=[0, 1]
-            )
-            if intersect_inside_hexagon:
-                return False
-        return True
+        projections = (rs - self.center) @ self.basis.T  # (nsamples,2)
+        # all basis vectors have equal length
+        in_hexagon = np.max(projections, axis=-1) <= np.sum(self.basis[0] ** 2)
+        return in_hexagon
 
     def sample(self, N, seed=None):
+        """
+        Vectorized uniform rejection sampling of hexagon using a proposal domain
+        define by the minimal enclosing square of the minimal enclosing circle
+        of the hexagon.
+
+        Parameters:
+            N: (int) number of points to sample
+            seed: (int) rng seed
+        Returns:
+            samples (nsamples,2): array of 2d hexagonal uniform samples
+        """
         # sample points within hexagon
         rng = np.random.default_rng(seed)
+        missing_samples = N
         samples = np.zeros((N, 2))
-        for i in range(N):
-            sample_square = rng.uniform(-self.radius, self.radius, 2)
-            while not self.is_in_hexagon(sample_square):
-                sample_square = rng.uniform(-self.radius, self.radius, 2)
-            samples[i] = sample_square
+        while missing_samples != 0:
+            sample_square = rng.uniform(
+                -self.radius, self.radius, size=(missing_samples, 2)
+            )
+            in_hexagon = self.is_in_hexagon(sample_square)
+            sample_square = sample_square[in_hexagon]
+            samples[
+                (N - missing_samples) : (N - missing_samples) + sample_square.shape[0]
+            ] = sample_square
+            missing_samples -= sample_square.shape[0]
         return samples
 
-    def wrap(self, x, hexagon=None):
+    def wrap(self, rs):
+        """
+        Extends _wrap() to a sequence of points
+
+        Parameters:
+            rs (nsamples,2): sequence of 2d points to wrap
+        Returns:
+            rs_wrapped (nsamples,2):array of wrapped 2d points
+        """
+        return np.array([self._wrap(rs[i]) for i in range(len(rs))])
+
+    def _wrap(self, x, hexagon=None):
         """
         Simple wrapping method that draws hexagons surrounding the
         vector x. The final hexagon containing the end point of the vector x
         gives the wrapped location of x as: x - origin
-        """
-        hexagon = copy.deepcopy(self) if hexagon is None else hexagon
-        if hexagon.is_in_hexagon(x):
-            return x - hexagon.center
-        hexdrant = np.argmax(hexagon.basis @ (x - hexagon.center))
-        hexagon.center += 2*hexagon.basis[hexdrant]
-        return self.wrap(x, hexagon)
-
-    def wrap2(self, x, origin=None, count=0):
-        """
-        Recursive method for wrapping a vector x along this hexagon object.
 
         Parameters:
-            x (2,): 2D "position" vector
-            origin (2,): origin of the x-vector - used for recurrence. Usage
-                         assumes self.center to start (i.e. None)
-
-        Returns:
-            new_x (2,): wrapped x
+            x (2,): 2D np.ndarray giving a position in 2D space
+            hexagon: object of this class - should not be specified by user, but
+                     it is used by this method during recursion.
         """
-        if origin is None:
-            origin = self.center
-        x = x - origin
-        phi = np.arctan2(*x[::-1]) * 180 / np.pi
-        # quadrant, but for a hexagon
-        hexdrant = int((phi - self.orientation_offset) // 60)
-        # line segment of hexdrant
-        u = self.hpoints[hexdrant]
-        v = self.hpoints[hexdrant + 1] - u
-        # find exit point
-        p, do_intersect = intersect(
-            u, v, origin, x, constraint1=[0, 1], constraint2=[0, 1]
-        )
-        if not do_intersect:
-            # hexagon wall and x do not intersect. In other words, x is
-            # within the hexagon, and no more wrapping is needed.
-            return x, count
-        # find reenter point
-        t = np.linalg.norm(p - u) / np.linalg.norm(v)
-        opposite_hexdrant = (hexdrant + 3) % 5
-        wrap_u = self.hpoints[opposite_hexdrant]
-        wrap_v = self.hpoints[opposite_hexdrant + 1] - wrap_u
-        wrap_p = wrap_u + (1 - t) * wrap_v
-        # subtract vector leaving the unit cell
-        new_x = x - p
-        return self.wrap(new_x, origin=-wrap_p, count=count + 1)
+        hexagon = copy.deepcopy(self) if hexagon is None else hexagon
+        if hexagon.is_in_hexagon(x[None])[0]:
+            return x - hexagon.center
+        hexdrant = np.argmax(hexagon.basis @ (x - hexagon.center))
+        hexagon.center += 2 * hexagon.basis[hexdrant]
+        return self._wrap(x, hexagon)
+
+    def geodesic(self, p1, p2):
+        """
+        Parameters:
+            p1,p2 (nsamples,2): nsamples of 2D vectors
+        """
+        p1 = self.wrap(p1)
+        p2 = self.wrap(p2)
+        p2 = np.concatenate(
+            [p2[:, None], p2[:, None] - 2 * self.basis[None]], axis=1
+        )  # (nsamples,7,2)
+        dist = np.linalg.norm(p2 - p1[:, None], axis=-1)  # (nsamples,7)
+        return np.min(dist, axis=-1)
+
+    def mesh(self, n):
+        """
+        Mesh hexagon. Transforms a scaled meshed rhombus mesh (in rhombus
+        coordinates to standard basis) to a hexagonal mesh through wrapping.
+
+        Parameters:
+            n: (int) squared mesh resolution (amount of mesh points)
+        Returns:
+            hexagon_mesh (n**2,2): hexagonal mesh
+        """
+        # make square mesh based on hexagon size
+        square_mesh = np.mgrid[
+            self.center[0] : self.center[0] + self.radius * 3 / 2 : complex(n),
+            self.center[1] : self.center[1] + self.radius * 3 / 2 : complex(n),
+        ].T.reshape(-1, 2)
+        # inverse transform square mesh (it is square in rhombus coordinates)
+        rhombus_mesh = rhombus_transform(square_mesh)
+        # rotate as hexagon is rotated
+        rhombus_mesh = rhombus_mesh @ self.rotmat_offset.T
+        # wrap rhombus to hexagon
+        hexagon_mesh = self.wrap(rhombus_mesh)
+        return hexagon_mesh
 
     def plot(self, fig, ax, center=None, color="blue"):
         center = self.center if center is None else center
@@ -133,7 +159,7 @@ class HexagonalGCs(torch.nn.Module):
         ks = torch.tensor(ks, dtype=dtype)
         self.ks = ks * f * 2 * np.pi
         # define unit cell from generating pattern
-        self.unit_cell = Hexagon(f*2/3, init_rot, np.zeros(2))
+        self.unit_cell = Hexagon(f * 2 / 3, init_rot, np.zeros(2))
         # self.inner_hexagon = Hexagon(f / np.sqrt(3), init_rot - 30, np.zeros(2))
         # init trainable phases
         phases = self.unit_cell.sample(ncells)
@@ -183,10 +209,20 @@ class HexagonalGCs(torch.nn.Module):
         """
         det = torch.linalg.det(torch.transpose(J, -2, -1) @ J)
         return torch.sqrt(det) if sqrt else det
-    
-    def linear_decoder(self,r,train=False):
-        if self.decoder is None or train:
-            self.decoder = 
+
+    def decode(self, activity):
+        """
+        Optimal linear decoding
+        """
+        if self.decoder is None:
+            raise Exception("Must train decoder first, use train_decoder(r)!")
+        return activity @ self.decoder
+
+    def train_decoder(self, r, **kwargs):
+        # least squares
+        X = self(r, **kwargs)
+        self.decoder = torch.linalg.inv((X.T @ X)) @ X.T @ r
+        return self.decoder
 
     def loss_fn(self, r):
         """
