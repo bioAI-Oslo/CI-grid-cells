@@ -7,6 +7,12 @@ from utils import *
 
 class Hexagon:
     def __init__(self, radius, orientation_offset, center):
+        """
+        Parameters:
+           radius (float): of the outer (minimal enclosing) circle of the hexagon
+           orientation_offset (float): rotate hexagon wrt. cardinal x-direction (degrees)
+           center (float): center position of hexagon
+        """
         self.radius = radius
         self.orientation_offset = orientation_offset
         self.center = center
@@ -147,6 +153,7 @@ class Hexagon:
         Returns:
             ripleys (float): value of statistic
         """
+        assert radius <= self.radius, "Larger radius than hexagon enclosing circle"
         rs = self.wrap(rs) if wrap else rs
         # duplicate and tile hexagon with 6 surrounding hexagons, and
         # the corresponding (wrapped) phases.
@@ -273,3 +280,41 @@ class HexagonalGCs(torch.nn.Module):
         loss.backward()
         self.optimizer.step()
         return loss.item()
+
+
+def permutation_test(X, Y, statistic, nperms=1000, alternative="two-sided"):
+    """
+    Permutation test. Method for measuring (under some given statistic function)
+    whether two samples X and Y come from the same distribution.
+
+    Parameters:
+        X (nsamples,nfeatures): samples of first group
+        Y (nsamples,nfeatures): samples of second group
+        statistic (Callable): statistic function: (m,n) x (m,n) -> scalar
+        nperms (int): number of permutations (samples of null-distribution)
+        alternative (str): p-value alternative
+    Returns:
+        XY_statistic (float): statistic(X,Y)
+        pvalue (float): p-value for statistic(X,Y) under null-hypothesis: No difference
+                        between the two groups
+        H0 (nperms,): array of null-distribution samples
+    """
+    XY_statistic = statistic(X, Y)
+    H0 = np.zeros(nperms)
+    N = X.shape[0]
+    XY = np.concatenate([X, Y])
+    for i in tqdm.trange(nperms):
+        XY = np.random.permutation(XY)
+        H0[i] = statistic(XY[:N], XY[N:])
+    leq = np.sum(XY_statistic <= H0)
+    # +1 correction assumes XY_statistic also included in H0
+    leq = (leq + 1) / (nperms + 1)
+    geq = np.sum(XY_statistic >= H0)
+    geq = (geq + 1) / (nperms + 1)
+    if alternative == "greater":
+        pvalue = geq
+    elif alternative == "less":
+        pvalue = leq
+    else:
+        pvalue = min(geq, leq) * 2
+    return XY_statistic, pvalue, H0
