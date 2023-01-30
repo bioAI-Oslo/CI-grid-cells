@@ -131,6 +131,34 @@ class Hexagon:
         hexagon_mesh = self.wrap(rhombus_mesh)
         return hexagon_mesh
 
+    def ripleys_k(self, rs, radius, wrap=True):
+        """
+        Ripleys k-function counting elements in balls with given radius with 
+        a periodic hexagonal boundary condition.
+
+        Parameters:
+            rs (nsamples,2): spatial/phase positions
+            radius (float): ball radius for ripleys k
+            wrap (bool): wether to wrap rs to self (hexagon) - this should be true
+                         unless they are pre-wrapped.
+        """
+        rs = self.wrap(rs) if wrap else rs
+        # duplicate and tile hexagon with 6 surrounding hexagons, and
+        # the corresponding (wrapped) phases.
+        outer_rs = (
+            rs[None] - 2 * self.basis[:, None]
+        )  # (1,n,2) - (6,1,2) => (6,n,2)
+        # add inner/surrounded hexagon as index 0
+        hexhex_rs = np.concatenate([rs[None], outer_rs], axis=0)  # => (7,n,2)
+        # mask of rs that are inside ball with centers given by inner hexagon and given radius
+        # ||(7,1,n,2) - (1,n,1,2)|| => (7,n,n)
+        in_balls = (
+            np.linalg.norm(hexhex_rs[:, None] - hexhex_rs[:, :, None], axis=-1) < radius
+        )
+        n = rs.shape[0]
+        ripleys = np.sum(in_balls) * self.area / (n * (n - 1))
+        return ripleys 
+
     def plot(self, fig, ax, center=None, color="blue"):
         center = self.center if center is None else center
         hpoints = self.hpoints + center
