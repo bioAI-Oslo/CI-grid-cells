@@ -130,3 +130,9 @@ def torus(R=1, r=0.5, alpha=0, beta=0, n=100, a=1, b=1):
     z = r * np.sin(theta[None] - alpha * phi[:, None])
     coords = np.array([x, y, z]).T
     return coords
+
+
+def energy_statistic(X,Y):
+    # extend to use geodesic distance rather than Euclidean
+    all_to_all_fn = lambda X,Y: np.mean(np.linalg.norm(X[:,None]-Y[None],axis=-1))
+    return 2*all_to_all_fn(X,Y) - all_to_all_fn(X,X) - all_to_all_fn(Y,Y)
