@@ -160,13 +160,16 @@ class Hexagon:
         outer_rs = rs[None] - 2 * self.basis[:, None]  # (1,n,2) - (6,1,2) => (6,n,2)
         # add inner/surrounded hexagon as index 0
         hexhex_rs = np.concatenate([rs[None], outer_rs], axis=0)  # => (7,n,2)
-        # mask of rs that are inside ball with centers given by inner hexagon and given radius
+        # mask of rs that are inside ball with centers given by inner hexagon and radius
         # ||(7,1,n,2) - (1,n,1,2)|| => (7,n,n)
         in_balls = (
-            np.linalg.norm(hexhex_rs[:, None] - hexhex_rs[:, :, None], axis=-1) < radius
+            np.linalg.norm(hexhex_rs[:, None] - hexhex_rs[:1, :, None], axis=-1)
+            < radius
         )
         n = rs.shape[0]
-        ripleys_K = np.sum(in_balls) * self.area / (n * (n - 1))
+        # correct by subtracting n on sum to not count phases defining the ball center
+        # this is equivalent to overwriting and setting the diagonal to false.
+        ripleys_K = (np.sum(in_balls) - n) * self.area / (n * (n - 1))
         if alternative == "K":
             return ripleys_K
         ripleys_L = np.sqrt(ripleys_K / np.pi)
