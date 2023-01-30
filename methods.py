@@ -131,9 +131,9 @@ class Hexagon:
         hexagon_mesh = self.wrap(rhombus_mesh)
         return hexagon_mesh
 
-    def ripleys_k(self, rs, radius, wrap=True):
+    def ripleys(self, rs, radius, wrap=True, alternative="H"):
         """
-        Ripleys k-function counting elements in balls with given radius with 
+        Ripleys k-function counting elements in balls with given radius with
         a periodic hexagonal boundary condition.
 
         Parameters:
@@ -141,13 +141,16 @@ class Hexagon:
             radius (float): ball radius for ripleys k
             wrap (bool): wether to wrap rs to self (hexagon) - this should be true
                          unless they are pre-wrapped.
+            alternative (str): 'K', 'L' or 'H' - defaults to 'H' for corrected
+                               and zero-centered expectation. See Kiskowski2009
+                               for further explanations.
+        Returns:
+            ripleys (float): value of statistic
         """
         rs = self.wrap(rs) if wrap else rs
         # duplicate and tile hexagon with 6 surrounding hexagons, and
         # the corresponding (wrapped) phases.
-        outer_rs = (
-            rs[None] - 2 * self.basis[:, None]
-        )  # (1,n,2) - (6,1,2) => (6,n,2)
+        outer_rs = rs[None] - 2 * self.basis[:, None]  # (1,n,2) - (6,1,2) => (6,n,2)
         # add inner/surrounded hexagon as index 0
         hexhex_rs = np.concatenate([rs[None], outer_rs], axis=0)  # => (7,n,2)
         # mask of rs that are inside ball with centers given by inner hexagon and given radius
@@ -156,8 +159,14 @@ class Hexagon:
             np.linalg.norm(hexhex_rs[:, None] - hexhex_rs[:, :, None], axis=-1) < radius
         )
         n = rs.shape[0]
-        ripleys = np.sum(in_balls) * self.area / (n * (n - 1))
-        return ripleys 
+        ripleys_K = np.sum(in_balls) * self.area / (n * (n - 1))
+        if alternative == "K":
+            return ripleys_K
+        ripleys_L = np.sqrt(ripleys_K / np.pi)
+        if alternative == "L":
+            return ripleys_L
+        ripleys_H = ripleys_L - radius
+        return ripleys_H
 
     def plot(self, fig, ax, center=None, color="blue"):
         center = self.center if center is None else center
