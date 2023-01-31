@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import copy
+import tqdm
 
 from utils import *
 
@@ -17,18 +18,43 @@ class Hexagon:
         self.orientation_offset = orientation_offset
         self.center = center
         self.area = 3 * np.sqrt(3) * radius * radius / 2
-        # create hexagonal points
-        rotmat60 = rotation_matrix(60, degrees=True)
+        # create radius and apothem vectors
         self.rotmat_offset = rotation_matrix(orientation_offset, degrees=True)
+        self.hpoints = self._init_hexpoints(radius, self.rotmat_offset)
+        self.basis = self._init_hexbasis(self.hpoints)
+
+    @staticmethod
+    def _init_hexpoints(radius, rotmat_offset):
+        """
+        Create radius vectors on hexagon
+
+        Parameters:
+            radius (float): radius of minimal enclosing hexagon circle
+            rotmat_offset (2,2): rotation matrix giving hexagonal rotation offset
+        Returns:
+            hpoints (6,2): array of hexagona radius vectors, i.e. where the hexagon
+                           touches the minimal enclosing circle
+        """
+        rotmat60 = rotation_matrix(60, degrees=True)
         hpoints = np.array([radius, 0])  # start vector along cardinal x-axis
-        hpoints = self.rotmat_offset @ hpoints
+        hpoints = rotmat_offset @ hpoints
         hpoints = [hpoints]
         for _ in range(5):
             hpoints.append(rotmat60 @ hpoints[-1])
-        self.hpoints = np.array(hpoints)
-        self.basis = np.zeros((6, 2))
-        for i in range(6):
-            self.basis[i] = (hpoints[i] + hpoints[(i + 1) % 6]) / 2
+        return np.array(hpoints)
+
+    @staticmethod
+    def _init_hexbasis(hpoints):
+        """
+        Create apothem vectors on hexagon
+
+        Parameters:
+            hpoints (6,2): See self._init_hexpoints() for a description
+        Returns:
+            basis (6,2): Apothem vectors, i.e. the vectors farthest away from
+                         the minimal enclosing circle.
+        """
+        return (2 * hpoints / np.sqrt(3)) @ rotation_matrix(30)
 
     def is_in_hexagon(self, rs):
         """
@@ -137,7 +163,9 @@ class Hexagon:
         hexagon_mesh = self.wrap(rhombus_mesh)
         return hexagon_mesh
 
-    def ripleys(self, rs, radius, wrap=True, alternative="H"):
+    def ripleys(
+        self, rs, radius, wrap=True, geometric_enclosure="hyperballs", alternative="H"
+    ):
         """
         Ripleys k-function counting elements in balls with given radius with
         a periodic hexagonal boundary condition.
@@ -147,6 +175,7 @@ class Hexagon:
             radius (float): ball radius for ripleys k
             wrap (bool): wether to wrap rs to self (hexagon) - this should be true
                          unless they are pre-wrapped.
+            geometric_enclosure (str): "hyperballs" or "hexagons" geometric enclosure
             alternative (str): 'K', 'L' or 'H' - defaults to 'H' for corrected
                                and zero-centered expectation. See Kiskowski2009
                                for further explanations.
@@ -161,15 +190,23 @@ class Hexagon:
         # add inner/surrounded hexagon as index 0
         hexhex_rs = np.concatenate([rs[None], outer_rs], axis=0)  # => (7,n,2)
         # mask of rs that are inside ball with centers given by inner hexagon and radius
-        # ||(7,1,n,2) - (1,n,1,2)|| => (7,n,n)
-        in_balls = (
-            np.linalg.norm(hexhex_rs[:, None] - hexhex_rs[:1, :, None], axis=-1)
-            < radius
-        )
+        # (7,1,n,2) - (1,n,1,2) => (7,n,n,2)
+        diff_rs = hexhex_rs[:, None] - hexhex_rs[:1, :, None]
+        if geometric_enclosure == "hyperballs":
+            in_geometry = np.linalg.norm(diff_rs, axis=-1) < radius
+        elif geometric_enclosure == "hexagons":
+            # construct hexagon basis for given ripley radius, (6,2)
+            hexbasis = Hexagon._init_hexbasis(self.hpoints * radius / self.radius)
+            # vectorised (many hexagons) is_in_hexagon method
+            # (7,n,n,2) @ (1,1,2,6) => (7,n,n,6)
+            projections = diff_rs @ hexbasis.T[None, None]
+            in_geometry = np.max(projections, axis=-1) <= np.sum(
+                hexbasis[0] ** 2, axis=-1
+            )
         n = rs.shape[0]
         # correct by subtracting n on sum to not count phases defining the ball center
         # this is equivalent to overwriting and setting the diagonal to false.
-        ripleys_K = (np.sum(in_balls) - n) * self.area / (n * (n - 1))
+        ripleys_K = (np.sum(in_geometry) - n) * self.area / (n * (n - 1))
         if alternative == "K":
             return ripleys_K
         ripleys_L = np.sqrt(ripleys_K / np.pi)
