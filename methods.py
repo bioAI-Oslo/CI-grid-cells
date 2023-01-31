@@ -54,7 +54,7 @@ class Hexagon:
             basis (6,2): Apothem vectors, i.e. the vectors farthest away from
                          the minimal enclosing circle.
         """
-        return (2 * hpoints / np.sqrt(3)) @ rotation_matrix(30)
+        return (np.sqrt(3) * hpoints / 2) @ rotation_matrix(30)
 
     def is_in_hexagon(self, rs):
         """
@@ -209,7 +209,11 @@ class Hexagon:
         ripleys_K = (np.sum(in_geometry) - n) * self.area / (n * (n - 1))
         if alternative == "K":
             return ripleys_K
-        ripleys_L = np.sqrt(ripleys_K / np.pi)
+        ripleys_L = (
+            np.sqrt(ripleys_K / np.pi)
+            if geometric_enclosure == "hyperballs"
+            else np.sqrt(2 * ripleys_K / (3 * np.sqrt(3)))
+        )
         if alternative == "L":
             return ripleys_L
         ripleys_H = ripleys_L - radius
