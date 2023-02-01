@@ -301,14 +301,34 @@ class HexagonalGCs(torch.nn.Module):
     def decode(self, activity):
         """
         Optimal linear decoding
+
+        Parameters:
+            activity (nsamples,ncells): grid cell activity across spatial samples
+        Returns:
+            r_pred (nsamples,2): predicted spatial positions
         """
         if self.decoder is None:
             raise Exception("Must train decoder first, use train_decoder(r)!")
+        if self.decoder.shape[0] > activity.shape[1]:
+            # make activity (nsamples,ncells+1)
+            activity = torch.concatenate(
+                [torch.ones((activity.shape[0], 1)), activity], axis=-1
+            )  # add bias
         return activity @ self.decoder
 
-    def train_decoder(self, r, **kwargs):
+    def train_decoder(self, r, bias=true, **kwargs):
+        """
+        Least squares (linear) decoder
+
+        Parameters:
+            r (nsamples,2): spatial positions
+        Returns:
+            decoder (ncells(+1),2): Linear decoder including optinal bias
+        """
         # least squares
-        X = self(r, **kwargs)
+        X = self(r, **kwargs)  # (nsamples,ncells)
+        if bias:
+            X = torch.concatenate([torch.ones((X.shape[0], 1)), X], axis=-1)  # add bias
         self.decoder = torch.linalg.inv((X.T @ X)) @ X.T @ r
         return self.decoder
 
