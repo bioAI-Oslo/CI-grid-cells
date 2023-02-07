@@ -2,8 +2,9 @@ import numpy as np
 import torch
 import copy
 import tqdm
+import matplotlib.pyplot as plt
 
-from utils import *
+from utils import rhombus_transform, rotation_matrix
 
 
 class Hexagon:
@@ -209,6 +210,16 @@ class Hexagon:
         ripleys_K = (np.sum(in_geometry) - n) * self.area / (n * (n - 1))
         if alternative == "K":
             return ripleys_K
+        if alternative == "standardized":
+            # as described in Lagache2013
+            mu = np.pi * radius**2
+            beta_r = np.pi * radius**2 / self.area
+            circumference = 6 * self.radius
+            gamma_r = circumference * radius / self.area
+            s2 = (2 * self.area**2 * beta_r / n**2) * (
+                1 + 0.305 * gamma_r + beta_r * (-1 + 0.0132 * n * gamma_r)
+            )
+            return (ripleys_K - mu) / np.sqrt(s2)
         ripleys_L = (
             np.sqrt(ripleys_K / np.pi)
             if geometric_enclosure == "hyperballs"
@@ -219,7 +230,9 @@ class Hexagon:
         ripleys_H = ripleys_L - radius
         return ripleys_H
 
-    def plot(self, fig, ax, center=None, color="blue"):
+    def plot(self, fig=None, ax=None, center=None, color="blue"):
+        if fig is None:
+            fig, ax = plt.subplots()
         center = self.center if center is None else center
         hpoints = self.hpoints + center
         for i in range(len(hpoints)):
@@ -235,7 +248,9 @@ class HexagonalGCs(torch.nn.Module):
     torch model for learning optimal grid cell phases
     """
 
-    def __init__(self, ncells=3, f=1, init_rot=0, dtype=torch.float32, **kwargs):
+    def __init__(
+        self, ncells=3, f=1, init_rot=0, rectify=False, dtype=torch.float32, **kwargs
+    ):
         super(HexagonalGCs, self).__init__(**kwargs)
         # init static grid properties
         self.ncells, self.f, self.init_rot, self.dtype = ncells, f, init_rot, dtype
@@ -254,11 +269,11 @@ class HexagonalGCs(torch.nn.Module):
         self.phases = torch.nn.Parameter(
             torch.tensor(phases, dtype=dtype, requires_grad=True)
         )
-        self.relu = torch.nn.ReLU()
+        self.relu = torch.nn.ReLU() if rectify else None
         self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
         self.decoder = None
 
-    def forward(self, r, rectify=False):
+    def forward(self, r):
         """
         Parameters:
             r (nsamples,2): spatial samples
@@ -268,7 +283,7 @@ class HexagonalGCs(torch.nn.Module):
         activity = torch.cos((r[:, None] - self.phases[None]) @ self.ks.T)
         activity = torch.sum(activity, axis=-1)  # sum plane waves
         activity = (2 / 3) * (activity / 3 + 0.5)  # Solstad2006 scaling
-        activity = self.relu(activity) if rectify else activity
+        activity = self.relu(activity) if self.relu else activity
         return activity
 
     def jacobian(self, r):
@@ -280,12 +295,13 @@ class HexagonalGCs(torch.nn.Module):
         Returns:
             J (nsamples,ncells,2): jacobian of the forward function
         """
-        relu_grad_mask = self.forward(r) > 0
         J_tmp = -(2 / 9) * torch.sin((r[:, None] - self.phases[None]) @ self.ks.T)
         Jx = torch.sum(J_tmp * self.ks[:, 0], axis=-1)
         Jy = torch.sum(J_tmp * self.ks[:, 1], axis=-1)
         J = torch.stack([Jx, Jy], axis=-1)
-        J = relu_grad_mask[..., None] * J
+        if self.relu:
+            relu_grad_mask = self.forward(r) > 0
+            J = relu_grad_mask[..., None] * J
         return J
 
     def the_jacobian(self, J, sqrt=True):
@@ -316,7 +332,7 @@ class HexagonalGCs(torch.nn.Module):
             )  # add bias
         return activity @ self.decoder
 
-    def train_decoder(self, r, bias=true, **kwargs):
+    def train_decoder(self, r, bias=True, **kwargs):
         """
         Least squares (linear) decoder
 
@@ -329,7 +345,8 @@ class HexagonalGCs(torch.nn.Module):
         X = self(r, **kwargs)  # (nsamples,ncells)
         if bias:
             X = torch.concatenate([torch.ones((X.shape[0], 1)), X], axis=-1)  # add bias
-        self.decoder = torch.linalg.inv((X.T @ X)) @ X.T @ r
+        self.decoder = torch.linalg.lstsq(X, r).solution
+        # self.decoder = torch.linalg.inv((X.T @ X)) @ X.T @ r
         return self.decoder
 
     def loss_fn(self, r):
@@ -353,7 +370,8 @@ def permutation_test(X, Y, statistic, nperms=1000, alternative="two-sided"):
 
     Parameters:
         X (nsamples,nfeatures): samples of first group
-        Y (nsamples,nfeatures): samples of second group
+        Y (nsamples,nfeatures) or Callable: samples of second group, or a sampler
+                                            function.
         statistic (Callable): statistic function: (m,n) x (m,n) -> scalar
         nperms (int): number of permutations (samples of null-distribution)
         alternative (str): p-value alternative
@@ -363,13 +381,20 @@ def permutation_test(X, Y, statistic, nperms=1000, alternative="two-sided"):
                         between the two groups
         H0 (nperms,): array of null-distribution samples
     """
+    Y_sampler_fn = None
+    N = X.shape[0]
+    if callable(Y):
+        Y_sampler_fn = Y
+        Y = Y_sampler_fn(N)  # sample nsamples
     XY_statistic = statistic(X, Y)
     H0 = np.zeros(nperms)
-    N = X.shape[0]
     XY = np.concatenate([X, Y])
     for i in tqdm.trange(nperms):
         XY = np.random.permutation(XY)
         H0[i] = statistic(XY[:N], XY[N:])
+        if Y_sampler_fn is not None:
+            # resample Y
+            XY = np.concatenate([X, Y_sampler_fn(N)])
     leq = np.sum(XY_statistic <= H0)
     # +1 correction assumes XY_statistic also included in H0
     leq = (leq + 1) / (nperms + 1)
