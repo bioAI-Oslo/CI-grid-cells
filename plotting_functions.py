@@ -5,17 +5,19 @@ from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
 
 
-def scatter3d(data, ncols=4, nrows=4, s=1, alpha=0.5, azim_elev_title=True, **kwargs):
+def scatter3d(data, ncols=4, nrows=4, s=1, c=None, alpha=0.5, azim_elev_title=True, **kwargs):
     assert data.shape[-1] == 3, "data must have three axes. No more, no less."
     if data.ndim > 2:
         data = data.reshape(-1, 3)
-    fig, axs = plt.subplots(ncols=ncols, nrows=nrows, subplot_kw={"projection": "3d"}, **kwargs)
+    fig, axs = plt.subplots(
+        ncols=ncols, nrows=nrows, subplot_kw={"projection": "3d"}, **kwargs
+    )
     num_plots = ncols * nrows
     azims = np.linspace(0, 180, ncols + 1)[:-1]
     elevs = np.linspace(0, 90, nrows + 1)[:-1]
     view_angles = np.stack(np.meshgrid(azims, elevs), axis=-1).reshape(-1, 2)
     for i, ax in enumerate(axs.flat):
-        ax.scatter(xs=data[:, 0], ys=data[:, 1], zs=data[:, 2], s=s, alpha=alpha)
+        ax.scatter(xs=data[:, 0], ys=data[:, 1], zs=data[:, 2], s=s, c=c, alpha=alpha)
         ax.azim = view_angles[i, 0]
         ax.elev = view_angles[i, 1]
         ax.axis("off")
@@ -34,9 +36,9 @@ def plot_samples_and_tiling(gridmodule, ratemaps, ratemap_examples=0, **kwargs):
         axs[i + 1].imshow(ratemap, origin="lower")
         axs[i + 1].axis("off")
 
-    axs[-1].imshow(np.around(np.sum(ratemaps, axis=0), decimals=10), origin='lower')
+    axs[-1].imshow(np.around(np.sum(ratemaps, axis=0), decimals=10), origin="lower")
     axs[-1].axis("off")
-    #fig.savefig(fname)
+    # fig.savefig(fname)
     return fig, axs
 
 
@@ -110,6 +112,54 @@ def rips_plot(pcloud, radius, graph=False, dmat=None, polygons=False, circles=Tr
                             p.set_array(np.array([5, 50, 100]))
                             ax.add_collection(p)
     return fig, ax
+
+
+def set_size(width=345.0, fraction=1, mode="wide"):
+    """Set figure dimensions to avoid scaling in LaTeX.
+    Taken from:
+    https://jwalton.info/Embed-Publication-Matplotlib-Latex/
+    To get the width of a latex document, print it with:
+    \the\textwidth
+    (https://tex.stackexchange.com/questions/39383/determine-text-width)
+    Parameters
+    ----------
+    width: float
+            Document textwidth or columnwidth in pts
+    fraction: float, optional
+            Fraction of the width which you wish the figure to occupy
+    mode: str
+            Whether figure should be scaled by the golden ratio in height
+            or width
+    Returns
+    -------
+    fig_dim: tuple
+            Dimensions of figure in inches
+    """
+    # Width of figure (in pts)
+    fig_width_pt = width# * fraction
+    # Convert from pt to inches
+    inches_per_pt = 1 / 72.27
+    # Golden ratio to set aesthetic figure height
+    # https://disq.us/p/2940ij3
+    golden_ratio = (5**0.5 - 1) / 2
+    # Figure width in inches
+    fig_width_in = fig_width_pt * inches_per_pt
+    # Figure height in inches
+    if mode == "wide":
+        fig_height_in = fig_width_in * golden_ratio
+    elif mode == "tall":
+        fig_height_in = fig_width_in / golden_ratio
+    elif mode == "square":
+        fig_height_in = fig_width_in
+    fig_height_max = 550.0 / 72.27
+    if mode == "max" or fig_height_in > fig_height_max:
+        # standard max-height of latex document
+        fig_height_in = fig_height_max
+    fig_dim = (fig_width_in, fig_height_in)
+    if isinstance(fraction, (int, float)):
+        fraction = (fraction, fraction)
+    fig_dim = (fig_width_in*fraction[0], fig_height_in*fraction[1])
+    return fig_dim
 
 
 def annotate_imshow(D, round_val=2, txt_size=6):
