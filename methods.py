@@ -265,13 +265,27 @@ class HexagonalGCs(torch.nn.Module):
         self.unit_cell = Hexagon(f * 2 / 3, init_rot, np.zeros(2))
         # self.inner_hexagon = Hexagon(f / np.sqrt(3), init_rot - 30, np.zeros(2))
         # init trainable phases
-        phases = self.unit_cell.sample(ncells)
-        self.phases = torch.nn.Parameter(
-            torch.tensor(phases, dtype=dtype, requires_grad=True)
-        )
+        phases = self.unit_cell.sample(ncells) # default random uniform initial phases
+        self.set_phases(phases) # initialises trainable params and optimizer
         self.relu = torch.nn.ReLU() if rectify else None
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
         self.decoder = None
+
+    def set_phases(self, phases):
+        """
+        Initialises trainable phases and optimizer 
+
+        Parameters:
+            phases (ncells,2): Sequence (np.array, torch tensor, list etc.) of
+                               initial/overwritten phases
+        """
+        phases = (
+            torch.tensor(phases, dtype=torch.float32)
+            if not isinstance(phases, torch.Tensor)
+            else phases
+        )
+        self.phases = torch.nn.Parameter(phases.clone(), requires_grad=True)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        return None
 
     def forward(self, r):
         """
@@ -304,6 +318,15 @@ class HexagonalGCs(torch.nn.Module):
             J = relu_grad_mask[..., None] * J
         return J
 
+    def metric_tensor(self, J):
+        """
+        Parameters:
+            J (nsamples,ncells,2): jacobian
+        Returns:
+           metric tensor (nsamples,2,2): the metric tensor
+        """
+        return torch.transpose(J, -2, -1) @ J
+
     def the_jacobian(self, J, sqrt=True):
         """
         Parameters:
@@ -311,7 +334,7 @@ class HexagonalGCs(torch.nn.Module):
         Returns:
             the jacobian (nsamples,): the jacobian, i.e. sqrt(det(J^T J))
         """
-        det = torch.linalg.det(torch.transpose(J, -2, -1) @ J)
+        det = torch.linalg.det(self.metric_tensor(J))
         return torch.sqrt(det) if sqrt else det
 
     def decode(self, activity):
