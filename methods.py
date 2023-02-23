@@ -125,7 +125,15 @@ class Hexagon:
         if hexagon.is_in_hexagon(x[None])[0]:
             return x - hexagon.center
         hexdrant = np.argmax(hexagon.basis @ (x - hexagon.center))
-        hexagon.center += 2 * hexagon.basis[hexdrant]
+        old_dist = np.linalg.norm(x-hexagon.center)
+        new_center = hexagon.center + 2 * hexagon.basis[hexdrant]
+        new_dist = np.linalg.norm(x-new_center)
+        if old_dist <= new_dist:
+            # numerical imperfection can lead to point landing right outside
+            # (between) two hexagons with center +- 2 basis vectors.
+            # stop this by choosing the "closest" hexagon
+            return x - hexagon.center
+        hexagon.center = new_center
         return self._wrap(x, hexagon)
 
     def geodesic(self, p1, p2):
@@ -230,16 +238,18 @@ class Hexagon:
         ripleys_H = ripleys_L - radius
         return ripleys_H
 
-    def plot(self, fig=None, ax=None, center=None, color="blue"):
-        if fig is None:
+    def plot(self, fig=None, ax=None, center=None, colors=None, **kwargs):
+        if ax is None:
             fig, ax = plt.subplots()
         center = self.center if center is None else center
         hpoints = self.hpoints + center
         for i in range(len(hpoints)):
-            ax.plot(*hpoints[i : (i + 2)].T, color=color)
-        last_line = np.array([hpoints[-1], hpoints[0]])
-        ax.plot(*last_line.T, color=color)
-        ax.set_aspect("equal")
+            line_segment = np.stack([hpoints[i],hpoints[(i+1)%6]])
+            if not (colors is None):
+                ax.plot(*line_segment.T, color=colors[i], **kwargs)
+            else:
+                ax.plot(*line_segment.T, **kwargs)
+        #ax.set_aspect("equal")
         return fig, ax
 
 
