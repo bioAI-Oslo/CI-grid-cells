@@ -24,6 +24,14 @@ class Hexagon:
         self.hpoints = self._init_hexpoints(radius, self.rotmat_offset)
         self.basis = self._init_hexbasis(self.hpoints)
 
+    def surrounding_centers(self,center=None):
+        if center is None:
+            center = self.center
+        scenters = []
+        for i in range(6):
+            scenters.append(center - self.basis[i])
+        return np.stack(scenters)
+
     @staticmethod
     def _init_hexpoints(radius, rotmat_offset):
         """
@@ -151,8 +159,8 @@ class Hexagon:
 
     def mesh(self, n):
         """
-        Mesh hexagon. Transforms a scaled meshed rhombus mesh (in rhombus
-        coordinates to standard basis) to a hexagonal mesh through wrapping.
+        Mesh hexagon by inverting a mesh in rhombus coordinates to the 
+        standard basis. Wrap mesh to the unit cell.
 
         Parameters:
             n: (int) squared mesh resolution (amount of mesh points)
@@ -168,6 +176,30 @@ class Hexagon:
         rhombus_mesh = rhombus_transform(square_mesh)
         # rotate as hexagon is rotated
         rhombus_mesh = rhombus_mesh @ self.rotmat_offset.T
+        # wrap rhombus to hexagon
+        hexagon_mesh = self.wrap(rhombus_mesh)
+        return hexagon_mesh
+
+    def mesh2(self, n):
+        """
+        Mesh hexagon by inverting a mesh in rhombus coordinates to the 
+        standard basis. Wrap mesh to the unit cell.
+
+        Parameters:
+            n: (int) squared mesh resolution (amount of mesh points)
+        Returns:
+            hexagon_mesh (n**2,2): hexagonal mesh
+        """
+        # make square mesh based on hexagon size
+        width_height = self.radius * 3 / 2
+        square_mesh = np.mgrid[
+                -width_height/2 : width_height/2 : complex(n),
+                -width_height/2 : width_height/2 : complex(n),
+        ].T.reshape(-1, 2)
+        # inverse transform square mesh (it is square in rhombus coordinates)
+        rhombus_mesh = rhombus_transform(square_mesh)
+        # rotate as hexagon is rotated and shift center
+        rhombus_mesh = rhombus_mesh @ self.rotmat_offset.T - self.center
         # wrap rhombus to hexagon
         hexagon_mesh = self.wrap(rhombus_mesh)
         return hexagon_mesh
@@ -295,6 +327,7 @@ class HexagonalGCs(torch.nn.Module):
         )
         self.phases = torch.nn.Parameter(phases.clone(), requires_grad=True)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        self.ncells = len(phases)
         return None
 
     def forward(self, r):
