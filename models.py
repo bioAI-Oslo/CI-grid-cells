@@ -70,14 +70,14 @@ class Similitude2(HexagonalGCs):
     def __init__(self, scale=None, **kwargs):
         super(Similitude2, self).__init__(**kwargs)
         # scale of similitude
-        self.optimizer = torch.optim.Adam(self.parameters(),lr=0.001)
         self.set_scale(scale)
+        self.optimizer = torch.optim.Adam(self.parameters(),lr=0.001)
 
     def set_scale(self, scale=None):
         if scale is None:
             # conformally isometric scaling LAW 
             scale = self.ncells*0.014621597785714284
-        self.scale = torch.nn.Parameter(torch.tensor(scale,dtype=torch.float32),requires_grad=True)
+        self.scale = torch.nn.Parameter(torch.tensor(scale,dtype=self.dtype),requires_grad=True)
         return self.scale
 
     def loss_fn(self, r):
@@ -97,4 +97,4 @@ class Similitude2(HexagonalGCs):
         # off_diag = metric_tensor[...,1,0]
         # det = g11*g22 - off_diag**2
         # loss = (det - self.scale)**2
-        return torch.mean(loss)
+        return torch.mean(torch.log(loss))

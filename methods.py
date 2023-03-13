@@ -291,7 +291,7 @@ class HexagonalGCs(torch.nn.Module):
     """
 
     def __init__(
-        self, ncells=3, f=1, init_rot=0, rectify=False, dtype=torch.float32, **kwargs
+        self, ncells=3, f=1, init_rot=0, rectify=False, dropout=False, dtype=torch.float32, **kwargs
     ):
         super(HexagonalGCs, self).__init__(**kwargs)
         # init static grid properties
@@ -311,6 +311,7 @@ class HexagonalGCs(torch.nn.Module):
         self.set_phases(phases) # initialises trainable params and optimizer
         self.relu = torch.nn.ReLU() if rectify else None
         self.decoder = None
+        self.dropout = torch.nn.Dropout() if dropout else None
 
     def set_phases(self, phases):
         """
@@ -321,7 +322,7 @@ class HexagonalGCs(torch.nn.Module):
                                initial/overwritten phases
         """
         phases = (
-            torch.tensor(phases, dtype=torch.float32)
+            torch.tensor(phases, dtype=self.dtype)
             if not isinstance(phases, torch.Tensor)
             else phases
         )
@@ -355,6 +356,10 @@ class HexagonalGCs(torch.nn.Module):
         J_tmp = -(2 / 9) * torch.sin((r[:, None] - self.phases[None]) @ self.ks.T)
         Jx = torch.sum(J_tmp * self.ks[:, 0], axis=-1)
         Jy = torch.sum(J_tmp * self.ks[:, 1], axis=-1)
+        if self.dropout:
+            mask = self.dropout(torch.ones_like(Jx))
+            print(mask)
+            Jx, Jy = Jx*mask, Jy*mask
         J = torch.stack([Jx, Jy], axis=-1)
         if self.relu:
             relu_grad_mask = self.forward(r) > 0
