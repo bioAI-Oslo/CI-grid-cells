@@ -4,6 +4,8 @@ import copy
 import tqdm
 import matplotlib.pyplot as plt
 
+from scipy.stats import gaussian_kde
+
 from utils import rhombus_transform, rotation_matrix
 
 
@@ -478,3 +480,23 @@ def permutation_test(X, Y, statistic, nperms=1000, alternative="two-sided"):
     else:
         pvalue = min(geq, leq) * 2
     return XY_statistic, pvalue, H0
+
+def phase_kde(unit_cell, phases, **kwargs):
+    """Approximate KDE of phases by retiling of unit cell
+    Args:
+        unit_cell: unit cell class
+        phases: array of phases, of shape (N, 2) where N is number of units.
+    Returns:
+        Estimated kernel, see scipy.stats.gaussian_kde for usage
+    """
+    phase_tiles = [phases - 2*unit_cell.basis[i] for i in range(6)]
+    expanded_phases = np.concatenate((phases, *phase_tiles), axis=0)
+    kernel = gaussian_kde(expanded_phases.T, **kwargs)
+    return kernel, expanded_phases
+
+def activity_kde(model):
+    def kernel(r):
+        activity = model(torch.tensor(r,dtype=torch.float32)).detach().numpy()
+        return np.sum(activity, axis = -1)
+    return kernel
+
