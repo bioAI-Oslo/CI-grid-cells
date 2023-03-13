@@ -3,9 +3,23 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
+import seaborn as sns
 
 
-def scatter3d(data, ncols=4, nrows=4, s=1, c=None, alpha=0.5, azim_elev_title=True, **kwargs):
+def project_cmap():
+    """
+    Custom color map
+    """
+    # Markus' dream color
+    # return sns.color_palette('Blues',as_cmap=True)
+    return sns.cubehelix_palette(
+        start=-0.25, rot=0, gamma=0.75, hue=2, light=1, dark=0.1, as_cmap=True
+    )
+
+
+def scatter3d(
+    data, ncols=4, nrows=4, s=1, c=None, alpha=0.5, azim_elev_title=True, **kwargs
+):
     assert data.shape[-1] == 3, "data must have three axes. No more, no less."
     if data.ndim > 2:
         data = data.reshape(-1, 3)
@@ -114,6 +128,12 @@ def rips_plot(pcloud, radius, graph=False, dmat=None, polygons=False, circles=Tr
     return fig, ax
 
 
+def minimal_ticks(ax):
+    ax.set_xticks([ax.get_xticks()[1], ax.get_xticks()[-1]])
+    ax.set_yticks([ax.get_yticks()[1], ax.get_yticks()[-1]])
+    return ax
+
+
 def set_size(width=345.0, fraction=1, mode="wide"):
     """Set figure dimensions to avoid scaling in LaTeX.
     Taken from:
@@ -136,7 +156,7 @@ def set_size(width=345.0, fraction=1, mode="wide"):
             Dimensions of figure in inches
     """
     # Width of figure (in pts)
-    fig_width_pt = width# * fraction
+    fig_width_pt = width  # * fraction
     # Convert from pt to inches
     inches_per_pt = 1 / 72.27
     # Golden ratio to set aesthetic figure height
@@ -158,7 +178,7 @@ def set_size(width=345.0, fraction=1, mode="wide"):
     fig_dim = (fig_width_in, fig_height_in)
     if isinstance(fraction, (int, float)):
         fraction = (fraction, fraction)
-    fig_dim = (fig_width_in*fraction[0], fig_height_in*fraction[1])
+    fig_dim = (fig_width_in * fraction[0], fig_height_in * fraction[1])
     return fig_dim
 
 
