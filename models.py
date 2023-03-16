@@ -1,4 +1,6 @@
 import torch
+import numpy as np
+import copy
 
 from methods import HexagonalGCs
 
@@ -11,6 +13,85 @@ class Similitude(HexagonalGCs):
         J = self.jacobian(r)
         det_J = self.the_jacobian(J)
         return torch.var(det_J)
+
+
+class RobustSimilitude(HexagonalGCs):
+    def __init__(self, r_magnitude=0.01, p_magnitude=0.01, **kwargs):
+        super(RobustSimilitude, self).__init__(**kwargs)
+        self.r_magnitude, self.p_magnitude = r_magnitude, p_magnitude
+
+    def forward(self, r, dp=None):
+        """
+        Overwrites super class forward to include phase-jittering
+
+        Parameters:
+            r (nsamples,2): spatial samples
+        Returns:
+            activity (nsamples,ncells): activity of all cells on spatial samples
+        """
+        phases = self.phases + dp if dp is not None else self.phases
+        activity = torch.cos((r[:, None] - phases[None]) @ self.ks.T)
+        activity = torch.sum(activity, axis=-1)  # sum plane waves
+        activity = (2 / 3) * (activity / 3 + 0.5)  # Solstad2006 scaling
+        activity = self.relu(activity) if self.relu else activity
+        return activity
+
+    @staticmethod
+    def jitter(nsamples, magnitudes=None, magnitude=1e-2, epsilon=1e-8):
+        """
+        Parameters:
+            nsamples int: size of jitter vector
+            magnitudes (nsamples,): ndarray of optional jitter magnitudes
+            magnitude float: magnitude range to sample
+
+        Return:
+            v_jitter (nsamples,2): The jitter vectors 
+        """
+        thetas = torch.rand(size=(nsamples,)) * 2 * np.pi
+        if magnitudes is None:
+            magnitudes = torch.rand(size=(nsamples,)) * magnitude + epsilon
+        v_jitter = torch.stack([torch.cos(thetas), torch.sin(thetas)], axis=-1)
+        v_jitter = magnitudes[:, None] * v_jitter
+        return v_jitter, magnitudes
+
+    def s(self, r, dr, dp):
+        """
+        s-function as defined in Xu2022 to learn conformal isometry
+
+        Parameters:
+            r (nsamples,2): np.ndarray matrix of 2D-spatial positions
+            dr (nsamples,2): np.ndarray matrix of 2D-spatial jitter positions
+            dp (ncells,2): np.ndarray matrix of 2D-spatial jitter phase-positions
+        Returns:
+            s-function evaluated (nsamples
+        """
+        # direct forward
+        f = self(r)
+        df = self(r + dr, dp)
+        # rescale on outer product
+        rescale_r = torch.sum(dr ** 2, axis=-1)
+        rescale_p = torch.sum(dp ** 2, axis=-1)
+        rescale_rp = rescale_r[:,None] + rescale_p[None]
+        return 2*torch.sum((f - df) ** 2, axis=-1) / torch.sum(rescale_rp, axis=-1)
+
+    def loss_fn(self, r):
+        """
+        Conformal isometry loss using jittering. Follows the formulation in
+        Xu2022 as this avoids the need for also finding/learning the conformal
+        isometry scale directly.
+        Additionally adds a robustness (wrt. the parameters, i.e. phases) term.
+        This is achieved by also jittering the parameters.
+        """
+        # sample perturbations for input and parameters
+        dr1, magnitudes_space = self.jitter(r.shape[0], magnitude=self.r_magnitude)
+        dr2, _ = self.jitter(r.shape[0], magnitudes_space)
+        dp1, magnitudes_phases = self.jitter(self.phases.shape[0], magnitude=self.p_magnitude)
+        dp2, _ = self.jitter(self.phases.shape[0], magnitudes_phases)
+        # perturb parameters and inputs
+        s1 = self.s(r, dr1, dp1)
+        s2 = self.s(r, dr2, dp2)
+        loss = torch.mean((s1 - s2) ** 2)
+        return loss
 
 
 class PlaceCells(HexagonalGCs):

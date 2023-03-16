@@ -293,11 +293,12 @@ class HexagonalGCs(torch.nn.Module):
     """
 
     def __init__(
-        self, ncells=3, f=1, init_rot=0, rectify=False, dropout=False, dtype=torch.float32, **kwargs
+        self, ncells=3, f=1, init_rot=0, rectify=False, dropout=False, lr=1e-3, dtype=torch.float32, **kwargs
     ):
         super(HexagonalGCs, self).__init__(**kwargs)
         # init static grid properties
         self.ncells, self.f, self.init_rot, self.dtype = ncells, f, init_rot, dtype
+        self.lr = lr
         rotmat_init = rotation_matrix(init_rot)
         rotmat_60 = rotation_matrix(60)
         k1 = np.array([1.0, 0.0])
@@ -329,7 +330,7 @@ class HexagonalGCs(torch.nn.Module):
             else phases
         )
         self.phases = torch.nn.Parameter(phases.clone(), requires_grad=True)
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         self.ncells = len(phases)
         return None
 
@@ -434,6 +435,25 @@ class HexagonalGCs(torch.nn.Module):
         loss.backward()
         self.optimizer.step()
         return loss.item()
+
+    def phase_kde(self, phases=None, res=64, **kwargs):
+        """Approximate KDE of phases by retiling of unit cell
+        Args:
+            unit_cell: unit cell class
+            phases: array of phases, of shape (N, 2) where N is number of units.
+        Returns:
+            Estimated kernel, see scipy.stats.gaussian_kde for usage
+        """
+        phases = self.phases.detach().numpy() if phases is None else phases
+        phase_tiles = [phases - 2*self.unit_cell.basis[i] for i in range(6)]
+        expanded_phases = np.concatenate((phases, *phase_tiles), axis=0)
+        kernel = gaussian_kde(expanded_phases.T, **kwargs)
+        mesh = None
+        if res is not None:
+            # use kde on mesh
+            mesh = self.unit_cell.mesh(res)
+            kde = kernel(mesh.T) 
+        return kde, mesh, kernel, expanded_phases
 
 
 def permutation_test(X, Y, statistic, nperms=1000, alternative="two-sided"):
