@@ -159,7 +159,7 @@ class Hexagon:
         dist = np.linalg.norm(p2 - p1[:, None], axis=-1)  # (nsamples,7)
         return np.min(dist, axis=-1)
 
-    def mesh(self, n):
+    def mesh(self, n, endpoints=False):
         """
         Mesh hexagon by inverting a mesh in rhombus coordinates to the 
         standard basis. Wrap mesh to the unit cell.
@@ -170,10 +170,12 @@ class Hexagon:
             hexagon_mesh (n**2,2): hexagonal mesh
         """
         # make square mesh based on hexagon size
+        n = n if endpoints else n + 1
         square_mesh = np.mgrid[
-            self.center[0] : self.center[0] + self.radius * 3 / 2 : complex(n),
-            self.center[1] : self.center[1] + self.radius * 3 / 2 : complex(n),
-        ].T.reshape(-1, 2)
+            self.center[0] : self.center[0] + self.radius * 3 / 2 : complex(n+1),
+            self.center[1] : self.center[1] + self.radius * 3 / 2 : complex(n+1),
+        ]#.T.reshape(-1, 2)
+        square_mesh = square_mesh.reshape(2,-1).T if endpoints else square_mesh[:,:-1,:-1].reshape(2,-1).T
         # inverse transform square mesh (it is square in rhombus coordinates)
         rhombus_mesh = rhombus_transform(square_mesh)
         # rotate as hexagon is rotated
@@ -361,7 +363,6 @@ class HexagonalGCs(torch.nn.Module):
         Jy = torch.sum(J_tmp * self.ks[:, 1], axis=-1)
         if self.dropout:
             mask = self.dropout(torch.ones_like(Jx))
-            print(mask)
             Jx, Jy = Jx*mask, Jy*mask
         J = torch.stack([Jx, Jy], axis=-1)
         if self.relu:
