@@ -182,9 +182,9 @@ def set_size(width=345.0, fraction=1, mode="wide"):
     return fig_dim
 
 
-def annotate_imshow(D, round_val=2, txt_size=6):
-    fig, ax = plt.subplots(1, 1, dpi=200)
-    ax.imshow(D, aspect="auto")
+def annotate_imshow(D, round_val=2, txt_size=6,cmap='coolwarm',**kwargs):
+    fig, ax = plt.subplots(1, 1)
+    ax.imshow(D, aspect="auto",cmap=cmap,**kwargs)
     for (j, i), label in np.ndenumerate(D):
         if label != 0:
             ax.text(

@@ -3,6 +3,7 @@ import numpy as np
 import copy
 
 from methods import HexagonalGCs
+from torch_topological.nn import VietorisRipsComplex
 
 
 class Similitude(HexagonalGCs):
@@ -14,6 +15,19 @@ class Similitude(HexagonalGCs):
         det_J = self.the_jacobian(J)
         return torch.var(det_J)
 
+class Homology(HexagonalGCs):
+    def __init__(self,**kwargs):
+        super(Homology, self).__init__(**kwargs)
+    
+    def loss_fn(self, r, p=2):
+        out = self(r)
+        dist = torch.cdist(out,out)
+        hom = VietorisRipsComplex(dim=2)(dist, treat_as_distances = True)
+        pers1 = torch.cat([torch.zeros(3),torch.sort(hom[1][1][:,1]-hom[1][1][:,0])[0]])
+        pers2 = torch.cat([torch.zeros(3),torch.sort(hom[2][1][:,1]-hom[2][1][:,0])[0]])
+        loss = -torch.sum(pers1[-2:]**p) - pers2[-1]**p + torch.sum(pers1[:-2]**p) + torch.sum(pers2[:-1]**p)
+        return loss
+        
 
 class JitterCI(HexagonalGCs):
     def __init__(self, r_magnitude=0.01, p_magnitude=0.01, **kwargs):
