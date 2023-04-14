@@ -15,44 +15,10 @@ class Similitude(HexagonalGCs):
         return torch.var(det_J)
 
 
-class RobustSimilitude(HexagonalGCs):
+class JitterCI(HexagonalGCs):
     def __init__(self, r_magnitude=0.01, p_magnitude=0.01, **kwargs):
-        super(RobustSimilitude, self).__init__(**kwargs)
+        super(JitterCI, self).__init__(**kwargs)
         self.r_magnitude, self.p_magnitude = r_magnitude, p_magnitude
-
-    def forward(self, r, dp=None):
-        """
-        Overwrites super class forward to include phase-jittering
-
-        Parameters:
-            r (nsamples,2): spatial samples
-        Returns:
-            activity (nsamples,ncells): activity of all cells on spatial samples
-        """
-        phases = self.phases + dp if dp is not None else self.phases
-        activity = torch.cos((r[:, None] - phases[None]) @ self.ks.T)
-        activity = torch.sum(activity, axis=-1)  # sum plane waves
-        activity = (2 / 3) * (activity / 3 + 0.5)  # Solstad2006 scaling
-        activity = self.relu(activity) if self.relu else activity
-        return activity
-
-    @staticmethod
-    def jitter(nsamples, magnitudes=None, magnitude=1e-2, epsilon=1e-8):
-        """
-        Parameters:
-            nsamples int: size of jitter vector
-            magnitudes (nsamples,): ndarray of optional jitter magnitudes
-            magnitude float: magnitude range to sample
-
-        Return:
-            v_jitter (nsamples,2): The jitter vectors 
-        """
-        thetas = torch.rand(size=(nsamples,)) * 2 * np.pi
-        if magnitudes is None:
-            magnitudes = torch.rand(size=(nsamples,)) * magnitude + epsilon
-        v_jitter = torch.stack([torch.cos(thetas), torch.sin(thetas)], axis=-1)
-        v_jitter = magnitudes[:, None] * v_jitter
-        return v_jitter, magnitudes
 
     def s(self, r, dr, dp):
         """
@@ -69,10 +35,10 @@ class RobustSimilitude(HexagonalGCs):
         f = self(r)
         df = self(r + dr, dp)
         # rescale on outer product
-        rescale_r = torch.sum(dr ** 2, axis=-1)
-        rescale_p = torch.sum(dp ** 2, axis=-1)
-        rescale_rp = rescale_r[:,None] + rescale_p[None]
-        return 2*torch.sum((f - df) ** 2, axis=-1) / torch.sum(rescale_rp, axis=-1)
+        rescale_r = torch.sum(dr**2, axis=-1)
+        rescale_p = torch.sum(dp**2, axis=-1)
+        rescale_rp = rescale_r[:, None] + rescale_p[None]
+        return 2 * torch.sum((f - df) ** 2, axis=-1) / torch.sum(rescale_rp, axis=-1)
 
     def loss_fn(self, r):
         """
@@ -85,13 +51,45 @@ class RobustSimilitude(HexagonalGCs):
         # sample perturbations for input and parameters
         dr1, magnitudes_space = self.jitter(r.shape[0], magnitude=self.r_magnitude)
         dr2, _ = self.jitter(r.shape[0], magnitudes_space)
-        dp1, magnitudes_phases = self.jitter(self.phases.shape[0], magnitude=self.p_magnitude)
+        dp1, magnitudes_phases = self.jitter(
+            self.phases.shape[0], magnitude=self.p_magnitude
+        )
         dp2, _ = self.jitter(self.phases.shape[0], magnitudes_phases)
         # perturb parameters and inputs
         s1 = self.s(r, dr1, dp1)
         s2 = self.s(r, dr2, dp2)
         loss = torch.mean((s1 - s2) ** 2)
         return loss
+
+
+class JacobianCI(HexagonalGCs):
+    def __init__(self, scale=None, p_magnitude=0, **kwargs):
+        super(JacobianCI, self).__init__(**kwargs)
+        self.p_magnitude = p_magnitude
+        # scale of similitude
+        self.set_scale(scale)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+
+    def set_scale(self, scale=None):
+        if scale is None:
+            # conformally isometric scaling LAW
+            scale = self.ncells * 1.4621597785714284
+        self.scale = torch.nn.Parameter(
+            torch.tensor(scale, dtype=self.dtype), requires_grad=True
+        )
+        return self.scale
+
+    def loss_fn(self, r):
+        dp, _ = self.jitter(self.phases.shape[0], magnitude=self.p_magnitude) if self.p_magnitude else (None, None)
+        J = self.jacobian(r, dp)
+        # (nsamples,2,2)
+        metric_tensor = self.metric_tensor(J)
+        diag_elems = torch.diagonal(metric_tensor, dim1=-2, dim2=-1)
+        lower_triangular_elems = torch.tril(metric_tensor, diagonal=-1)
+        loss = torch.sum((diag_elems - self.scale) ** 2, dim=-1) + 2 * torch.sum(
+            lower_triangular_elems**2, dim=(-2, -1)
+        )
+        return torch.mean(loss)
 
 
 class PlaceCells(HexagonalGCs):
@@ -127,7 +125,7 @@ class PlaceCells(HexagonalGCs):
         """
         activity = torch.exp(
             -torch.sum(
-                (r[:, None] - self.phases[None]) ** 2 / (2 * self.sig ** 2), dim=-1
+                (r[:, None] - self.phases[None]) ** 2 / (2 * self.sig**2), dim=-1
             )
         )
         return activity
@@ -142,7 +140,7 @@ class PlaceCells(HexagonalGCs):
             J (nsamples,ncells,2): jacobian of the forward function
         """
         p = self(r)
-        J = -1 / self.sig ** 2 * (r[:, None] - self.phases[None]) * p[..., None]
+        J = -1 / self.sig**2 * (r[:, None] - self.phases[None]) * p[..., None]
         return J
 
     def metric(self, r):
@@ -159,43 +157,6 @@ class PlaceCells(HexagonalGCs):
         ) ** 2
         cross_loss = 2 * g[:, 0, 1] ** 2
         return torch.mean(diag_loss + cross_loss)
-
-
-class Similitude2(HexagonalGCs):
-    def __init__(self, scale=None, **kwargs):
-        super(Similitude2, self).__init__(**kwargs)
-        # scale of similitude
-        self.set_scale(scale)
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
-
-    def set_scale(self, scale=None):
-        if scale is None:
-            # conformally isometric scaling LAW
-            scale = self.ncells * 0.014621597785714284
-        self.scale = torch.nn.Parameter(
-            torch.tensor(scale, dtype=self.dtype), requires_grad=True
-        )
-        return self.scale
-
-    def loss_fn(self, r):
-        J = self.jacobian(r)
-        # (nsamples,2,2)
-        metric_tensor = self.metric_tensor(J)
-        diag_elems = torch.diagonal(metric_tensor, dim1=-2, dim2=-1)
-        lower_triangular_elems = torch.tril(metric_tensor, diagonal=-1)
-        loss = torch.sum((diag_elems - 100 * self.scale) ** 2, dim=-1) + 2 * torch.sum(
-            lower_triangular_elems ** 2, dim=(-2, -1)
-        )
-        # HOW TO INCLUDE MAXIMISE SCALE????
-        # loss -= 100*self.scale
-
-        # g11 = metric_tensor[...,0,0]
-        # g22 = metric_tensor[...,1,1]
-        # off_diag = metric_tensor[...,1,0]
-        # det = g11*g22 - off_diag**2
-        # loss = (det - self.scale)**2
-        # return torch.mean(torch.log(loss))
-        return torch.mean(loss)
 
 
 class Similitude3(HexagonalGCs):
@@ -249,7 +210,7 @@ class Similitude3(HexagonalGCs):
 
         off_diag = metric_tensor[..., 1, 0]
         return g11, g22, off_diag
-
+    
     def loss_fn(self, r, keepdims=False):
         ra = r[0]
         rb = ra + r[1]
@@ -260,8 +221,8 @@ class Similitude3(HexagonalGCs):
         gb = self((rb, r[-1]))
         gc = self((rc, r[-1]))
 
-        sab = torch.sum((ga - gb) ** 2, dim=-1) / dr ** 2
-        sac = torch.sum((ga - gc) ** 2, dim=-1) / dr ** 2
+        sab = torch.sum((ga - gb) ** 2, dim=-1) / dr**2
+        sac = torch.sum((ga - gc) ** 2, dim=-1) / dr**2
 
         loss = (sab - sac) ** 2
 
@@ -277,7 +238,7 @@ class Similitude3(HexagonalGCs):
             torch.var(g11)
             + torch.var(g22)
             + torch.mean((g11 - g22) ** 2)
-            + 2 * torch.mean(off_diag ** 2)
+            + 2 * torch.mean(off_diag**2)
         )
 
         if not keepdims:

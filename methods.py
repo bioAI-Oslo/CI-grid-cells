@@ -26,7 +26,7 @@ class Hexagon:
         self.hpoints = self._init_hexpoints(radius, self.rotmat_offset)
         self.basis = self._init_hexbasis(self.hpoints)
 
-    def surrounding_centers(self,center=None):
+    def surrounding_centers(self, center=None):
         if center is None:
             center = self.center
         scenters = []
@@ -135,9 +135,9 @@ class Hexagon:
         if hexagon.is_in_hexagon(x[None])[0]:
             return x - hexagon.center
         hexdrant = np.argmax(hexagon.basis @ (x - hexagon.center))
-        old_dist = np.linalg.norm(x-hexagon.center)
+        old_dist = np.linalg.norm(x - hexagon.center)
         new_center = hexagon.center + 2 * hexagon.basis[hexdrant]
-        new_dist = np.linalg.norm(x-new_center)
+        new_dist = np.linalg.norm(x - new_center)
         if old_dist <= new_dist:
             # numerical imperfection can lead to point landing right outside
             # (between) two hexagons with center +- 2 basis vectors.
@@ -161,7 +161,7 @@ class Hexagon:
 
     def mesh(self, n, endpoints=False):
         """
-        Mesh hexagon by inverting a mesh in rhombus coordinates to the 
+        Mesh hexagon by inverting a mesh in rhombus coordinates to the
         standard basis. Wrap mesh to the unit cell.
 
         Parameters:
@@ -172,10 +172,14 @@ class Hexagon:
         # make square mesh based on hexagon size
         n = n if endpoints else n + 1
         square_mesh = np.mgrid[
-            self.center[0] : self.center[0] + self.radius * 3 / 2 : complex(n+1),
-            self.center[1] : self.center[1] + self.radius * 3 / 2 : complex(n+1),
-        ]#.T.reshape(-1, 2)
-        square_mesh = square_mesh.reshape(2,-1).T if endpoints else square_mesh[:,:-1,:-1].reshape(2,-1).T
+            self.center[0] : self.center[0] + self.radius * 3 / 2 : complex(n + 1),
+            self.center[1] : self.center[1] + self.radius * 3 / 2 : complex(n + 1),
+        ]  # .T.reshape(-1, 2)
+        square_mesh = (
+            square_mesh.reshape(2, -1).T
+            if endpoints
+            else square_mesh[:, :-1, :-1].reshape(2, -1).T
+        )
         # inverse transform square mesh (it is square in rhombus coordinates)
         rhombus_mesh = rhombus_transform(square_mesh)
         # rotate as hexagon is rotated
@@ -186,7 +190,7 @@ class Hexagon:
 
     def mesh2(self, n):
         """
-        Mesh hexagon by inverting a mesh in rhombus coordinates to the 
+        Mesh hexagon by inverting a mesh in rhombus coordinates to the
         standard basis. Wrap mesh to the unit cell.
 
         Parameters:
@@ -197,8 +201,8 @@ class Hexagon:
         # make square mesh based on hexagon size
         width_height = self.radius * 3 / 2
         square_mesh = np.mgrid[
-                -width_height/2 : width_height/2 : complex(n),
-                -width_height/2 : width_height/2 : complex(n),
+            -width_height / 2 : width_height / 2 : complex(n),
+            -width_height / 2 : width_height / 2 : complex(n),
         ].T.reshape(-1, 2)
         # inverse transform square mesh (it is square in rhombus coordinates)
         rhombus_mesh = rhombus_transform(square_mesh)
@@ -280,12 +284,12 @@ class Hexagon:
         center = self.center if center is None else center
         hpoints = self.hpoints + center
         for i in range(len(hpoints)):
-            line_segment = np.stack([hpoints[i],hpoints[(i+1)%6]])
+            line_segment = np.stack([hpoints[i], hpoints[(i + 1) % 6]])
             if not (colors is None):
                 ax.plot(*line_segment.T, color=colors[i], **kwargs)
             else:
                 ax.plot(*line_segment.T, **kwargs)
-        #ax.set_aspect("equal")
+        # ax.set_aspect("equal")
         return fig, ax
 
 
@@ -295,12 +299,20 @@ class HexagonalGCs(torch.nn.Module):
     """
 
     def __init__(
-        self, ncells=3, f=1, init_rot=0, rectify=False, dropout=False, lr=1e-3, dtype=torch.float32, **kwargs
+        self,
+        ncells=3,
+        f=1,
+        init_rot=0,
+        shift=0,
+        dropout=False,
+        lr=1e-3,
+        dtype=torch.float32,
+        **kwargs
     ):
         super(HexagonalGCs, self).__init__(**kwargs)
         # init static grid properties
         self.ncells, self.f, self.init_rot, self.dtype = ncells, f, init_rot, dtype
-        self.lr = lr
+        self.lr, self.shift = lr, shift
         rotmat_init = rotation_matrix(init_rot)
         rotmat_60 = rotation_matrix(60)
         k1 = np.array([1.0, 0.0])
@@ -312,15 +324,15 @@ class HexagonalGCs(torch.nn.Module):
         self.unit_cell = Hexagon(f * 2 / 3, init_rot, np.zeros(2))
         # self.inner_hexagon = Hexagon(f / np.sqrt(3), init_rot - 30, np.zeros(2))
         # init trainable phases
-        phases = self.unit_cell.sample(ncells) # default random uniform initial phases
-        self.set_phases(phases) # initialises trainable params and optimizer
-        self.relu = torch.nn.ReLU() if rectify else None
+        phases = self.unit_cell.sample(ncells)  # default random uniform initial phases
+        self.set_phases(phases)  # initialises trainable params and optimizer
+        self.relu = torch.nn.ReLU()
         self.decoder = None
         self.dropout = torch.nn.Dropout() if dropout else None
 
     def set_phases(self, phases):
         """
-        Initialises trainable phases and optimizer 
+        Initialises trainable phases and optimizer
 
         Parameters:
             phases (ncells,2): Sequence (np.array, torch tensor, list etc.) of
@@ -336,48 +348,67 @@ class HexagonalGCs(torch.nn.Module):
         self.ncells = len(phases)
         return None
 
-    def forward(self, r):
+    @staticmethod
+    def jitter(nsamples, magnitudes=None, magnitude=1e-2, epsilon=1e-8):
+        """
+        Parameters:
+            nsamples int: size of jitter vector
+            magnitudes (nsamples,): ndarray of optional jitter magnitudes
+            magnitude float: magnitude range to sample
+
+        Return:
+            v_jitter (nsamples,2): The jitter vectors
+        """
+        thetas = torch.rand(size=(nsamples,)) * 2 * np.pi
+        if magnitudes is None:
+            magnitudes = torch.rand(size=(nsamples,)) * magnitude + epsilon
+        v_jitter = torch.stack([torch.cos(thetas), torch.sin(thetas)], axis=-1)
+        v_jitter = magnitudes[:, None] * v_jitter
+        return v_jitter, magnitudes
+
+    def forward(self, r, dp=None):
         """
         Parameters:
             r (nsamples,2): spatial samples
+            dp (ncells,2): optional phase (jitter) shift
         Returns:
             activity (nsamples,ncells): activity of all cells on spatial samples
         """
-        activity = torch.cos((r[:, None] - self.phases[None]) @ self.ks.T)
+        phases = self.phases + dp if dp is not None else self.phases
+        activity = torch.cos((r[:, None] - phases[None]) @ self.ks.T)
         activity = torch.sum(activity, axis=-1)  # sum plane waves
-        activity = (2 / 3) * (activity / 3 + 0.5)  # Solstad2006 scaling
-        activity = self.relu(activity) if self.relu else activity
+        # activity = (2 / 3) * (activity / 3 + 0.5)  # Solstad2006 rescaling, range: [-1.5,3] -> [0,1]
+        activity = (
+            2 * activity / 9 + 1 / 3
+        )  # Solstad2006 rescaling, range: [-1.5,3] -> [0,1]
+        activity = activity - self.shift  # shift to range: [-shift,1-shift]
+        activity = (
+            self.relu(activity) if self.shift else activity
+        )  # rectify, range: [0,1-shift]
         return activity
 
-    def jacobian(self, r):
+    def jacobian(self, r, dp=None):
         """
         Jacobian of the forward function
 
         Parameters:
             r (nsamples,2): spatial samples
+            dp (ncells,2): optional phase (jitter) shift
         Returns:
             J (nsamples,ncells,2): jacobian of the forward function
         """
-        J_tmp = -(2 / 9) * torch.sin((r[:, None] - self.phases[None]) @ self.ks.T)
+        phases = self.phases + dp if dp is not None else self.phases
+        J_tmp = -(2 / 9) * torch.sin((r[:, None] - phases[None]) @ self.ks.T)
         Jx = torch.sum(J_tmp * self.ks[:, 0], axis=-1)
         Jy = torch.sum(J_tmp * self.ks[:, 1], axis=-1)
         if self.dropout:
             mask = self.dropout(torch.ones_like(Jx))
-            Jx, Jy = Jx*mask, Jy*mask
+            Jx, Jy = Jx * mask, Jy * mask
         J = torch.stack([Jx, Jy], axis=-1)
-        if self.relu:
-            relu_grad_mask = self.forward(r) > 0
+        if self.shift:
+            relu_grad_mask = self.forward(r, dp) > 0
             J = relu_grad_mask[..., None] * J
         return J
-
-    def metric_tensor(self, J):
-        """
-        Parameters:
-            J (nsamples,ncells,2): jacobian
-        Returns:
-           metric tensor (nsamples,2,2): the metric tensor
-        """
-        return torch.transpose(J, -2, -1) @ J
 
     def the_jacobian(self, J, sqrt=True):
         """
@@ -388,6 +419,35 @@ class HexagonalGCs(torch.nn.Module):
         """
         det = torch.linalg.det(self.metric_tensor(J))
         return torch.sqrt(det) if sqrt else det
+
+    def metric_tensor(self, J):
+        """
+        Parameters:
+            J (nsamples,ncells,2): jacobian
+        Returns:
+           metric tensor (nsamples,2,2): the metric tensor
+        """
+        return torch.transpose(J, -2, -1) @ J
+
+    def CI_metric(Gs=None, J=None, r=None):
+        """
+        Conformal Isometry metric
+
+        Parameters:
+            Gs (nsamples,2,2): metric tensor
+            J (nsamples,ncells,2): jacobian
+            r (nsamples,2): spatial samples
+        Returns:
+            CI_metric float: the conformal isometry metric
+        """
+        if Gs is None:
+            if J is None:
+                J = self.jacobian(r)
+            Gs = self.metric_tensor(J)
+        g11 = Gs[:, 0, 0]
+        g22 = Gs[:, 1, 1]
+        g12 = Gs[:, 0, 1]
+        return np.var(g11) + np.var(g22) + np.mean((g11 - g22) ** 2) + 2 * np.mean(g12)
 
     def decode(self, activity):
         """
@@ -446,14 +506,14 @@ class HexagonalGCs(torch.nn.Module):
             Estimated kernel, see scipy.stats.gaussian_kde for usage
         """
         phases = self.phases.detach().numpy() if phases is None else phases
-        phase_tiles = [phases - 2*self.unit_cell.basis[i] for i in range(6)]
+        phase_tiles = [phases - 2 * self.unit_cell.basis[i] for i in range(6)]
         expanded_phases = np.concatenate((phases, *phase_tiles), axis=0)
         kernel = gaussian_kde(expanded_phases.T, **kwargs)
         mesh = None
         if res is not None:
             # use kde on mesh
             mesh = self.unit_cell.mesh(res)
-            kde = kernel(mesh.T) 
+            kde = kernel(mesh.T)
         return kde, mesh, kernel, expanded_phases
 
 
@@ -502,6 +562,7 @@ def permutation_test(X, Y, statistic, nperms=1000, alternative="two-sided"):
         pvalue = min(geq, leq) * 2
     return XY_statistic, pvalue, H0
 
+
 def phase_kde(unit_cell, phases, **kwargs):
     """Approximate KDE of phases by retiling of unit cell
     Args:
@@ -510,14 +571,15 @@ def phase_kde(unit_cell, phases, **kwargs):
     Returns:
         Estimated kernel, see scipy.stats.gaussian_kde for usage
     """
-    phase_tiles = [phases - 2*unit_cell.basis[i] for i in range(6)]
+    phase_tiles = [phases - 2 * unit_cell.basis[i] for i in range(6)]
     expanded_phases = np.concatenate((phases, *phase_tiles), axis=0)
     kernel = gaussian_kde(expanded_phases.T, **kwargs)
     return kernel, expanded_phases
 
+
 def activity_kde(model):
     def kernel(r):
-        activity = model(torch.tensor(r,dtype=torch.float32)).detach().numpy()
-        return np.sum(activity, axis = -1)
-    return kernel
+        activity = model(torch.tensor(r, dtype=torch.float32)).detach().numpy()
+        return np.sum(activity, axis=-1)
 
+    return kernel
