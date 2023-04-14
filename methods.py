@@ -172,8 +172,8 @@ class Hexagon:
         # make square mesh based on hexagon size
         n = n if endpoints else n + 1
         square_mesh = np.mgrid[
-            self.center[0] : self.center[0] + self.radius * 3 / 2 : complex(n + 1),
-            self.center[1] : self.center[1] + self.radius * 3 / 2 : complex(n + 1),
+            self.center[0] : self.center[0] + self.radius * 3 / 2 : complex(n),
+            self.center[1] : self.center[1] + self.radius * 3 / 2 : complex(n),
         ]  # .T.reshape(-1, 2)
         square_mesh = (
             square_mesh.reshape(2, -1).T
@@ -429,7 +429,7 @@ class HexagonalGCs(torch.nn.Module):
         """
         return torch.transpose(J, -2, -1) @ J
 
-    def CI_metric(Gs=None, J=None, r=None):
+    def CI_metric(self, Gs=None, J=None, r=None):
         """
         Conformal Isometry metric
 
@@ -442,12 +442,13 @@ class HexagonalGCs(torch.nn.Module):
         """
         if Gs is None:
             if J is None:
+                r = torch.tensor(r, dtype=self.dtype) if not isinstance(r, torch.Tensor) else r
                 J = self.jacobian(r)
             Gs = self.metric_tensor(J)
         g11 = Gs[:, 0, 0]
         g22 = Gs[:, 1, 1]
         g12 = Gs[:, 0, 1]
-        return np.var(g11) + np.var(g22) + np.mean((g11 - g22) ** 2) + 2 * np.mean(g12)
+        return torch.var(g11) + torch.var(g22) + torch.mean((g11 - g22) ** 2) + 2 * torch.mean(g12)
 
     def decode(self, activity):
         """
