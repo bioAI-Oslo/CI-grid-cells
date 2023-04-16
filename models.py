@@ -6,6 +6,63 @@ from methods import HexagonalGCs
 from torch_topological.nn import VietorisRipsComplex
 
 
+
+
+class LinDecoder(HexagonalGCs):
+    def __init__(self,
+                hex_metric = False,
+                least_squares = False,
+                pos_scale = 1,
+                **kwargs
+    ):
+        super(LinDecoder, self).__init__(**kwargs)
+
+        # Parameters
+        self.pos_scale = pos_scale
+        self.least_squares = least_squares
+        if not least_squares:
+            self.xyweights = torch.nn.Parameter(
+                torch.ones(self.ncells, 2)/(self.ncells*2),
+              requires_grad=True)
+        else:
+            self.xyweights = torch.ones(self.ncells, 2)/(self.ncells*2)            
+        self.hex_metric = hex_metric
+        if hex_metric:
+            diam = self.unit_cell.basis[1,1]*2#
+            a = torch.tensor([[0., 0.]])
+            b = torch.tensor([[-0.5, np.sqrt(3.0)/2]])*diam
+            c = torch.tensor([[-0.5, -np.sqrt(3.0)/2]])*diam
+            d = torch.tensor([[0.5, np.sqrt(3.0)/2]])*diam
+            e = torch.tensor([[0.5, -np.sqrt(3.0)/2]])*diam
+            f = torch.tensor([[-1., 0.]])*diam
+            g = torch.tensor([[1., 0.]])*diam
+            self.addition = torch.flip(torch.concatenate((a,b,c,d,e,f,g),0),(1,0))
+            
+    def loss_fn(self, pos):
+        pos *= self.pos_scale 
+        activity = self(pos)
+        if self.least_squares:
+            self.xyweights = torch.linalg.lstsq(activity, pos).solution
+#            self.xyweights = torch.linalg.pinv(activity) @ pos
+        decode_pos = torch.matmul(activity, self.xyweights)    
+        if self.hex_metric:                        
+            diffall = torch.zeros(7, len(pos))
+            for i in range(7):
+                diffall[i] = torch.sum(torch.square((decode_pos+self.addition[i]) - pos),1)
+            return torch.sum(torch.min(diffall,0).values)
+        else:
+            return torch.sum(torch.square(decode_pos - pos))
+
+        
+    def loss_fn2(self, pos):
+        pos *= self.pos_scale 
+        activity = self(pos)
+        xyweights = torch.linalg.pinv(activity) @ pos
+        decode_pos = torch.matmul(activity, xyweights)    
+        return torch.sum(torch.square(decode_pos - pos))
+        
+
+
 class Similitude(HexagonalGCs):
     def __init__(self, **kwargs):
         super(Similitude, self).__init__(**kwargs)
@@ -104,6 +161,8 @@ class JacobianCI(HexagonalGCs):
             lower_triangular_elems**2, dim=(-2, -1)
         )
         return torch.mean(loss)
+
+
 
 
 class PlaceCells(HexagonalGCs):
