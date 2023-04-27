@@ -1,0 +1,24 @@
+name: grid-cells
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+  - defaults
+dependencies:
+  - python=3
+  - numpy
+  - scipy
+  - matplotlib
+  - tqdm
+  - jupyterlab
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=11.7
+  - imageio
+  - pip
+  - pip:
+    - ctimeit
+    - rat-simulator
+    - git+https://github.com/CINPLA/spatial-maps.git@dev#egg=spatial-maps
+prefix: /home/vemundss/anaconda3/envs/ml
