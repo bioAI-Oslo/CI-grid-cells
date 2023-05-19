@@ -69,6 +69,8 @@ class JitterCI(HexagonalGCs):
             self.phases.shape[0], magnitude=self.p_magnitude
         )
         dp2, _ = self.jitter(self.phases.shape[0], magnitudes_phases)
+        #dp1 = torch.normal(0, self.p_magnitude, size=(r.shape[0], self.ncells), dtype=self.dtype)
+        #dp2 = torch.normal(0, self.p_magnitude, size=(r.shape[0], self.ncells), dtype=self.dtype)
         # perturb parameters and inputs
         s1 = self.s(r, dr1, dp1)
         s2 = self.s(r, dr2, dp2)
@@ -95,6 +97,7 @@ class JacobianCI(HexagonalGCs):
 
     def loss_fn(self, r):
         dp, _ = self.jitter(self.phases.shape[0], magnitude=self.p_magnitude) if self.p_magnitude else (None, None)
+        #dp = torch.normal(0, self.p_magnitude, size=(r.shape[0], self.ncells), dtype=self.dtype)
         J = self.jacobian(r, dp)
         # (nsamples,2,2)
         metric_tensor = self.metric_tensor(J)
