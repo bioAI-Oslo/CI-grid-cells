@@ -1,4 +1,5 @@
 import numpy as np
+import scipy
 import torch
 import copy
 import tqdm
@@ -31,7 +32,7 @@ class Hexagon:
             center = self.center
         scenters = []
         for i in range(6):
-            scenters.append(center - self.basis[i])
+            scenters.append(center - 2 * self.basis[i])
         return np.stack(scenters)
 
     @staticmethod
@@ -159,7 +160,7 @@ class Hexagon:
         dist = np.linalg.norm(p2 - p1[:, None], axis=-1)  # (nsamples,7)
         return np.min(dist, axis=-1)
 
-    def mesh(self, n, endpoints=False):
+    def mesh(self, n, endpoints=False, wrap=True):
         """
         Mesh hexagon by inverting a mesh in rhombus coordinates to the
         standard basis. Wrap mesh to the unit cell.
@@ -184,9 +185,11 @@ class Hexagon:
         rhombus_mesh = rhombus_transform(square_mesh)
         # rotate as hexagon is rotated
         rhombus_mesh = rhombus_mesh @ self.rotmat_offset.T
-        # wrap rhombus to hexagon
-        hexagon_mesh = self.wrap(rhombus_mesh)
-        return hexagon_mesh
+        if wrap:
+            # wrap rhombus to hexagon
+            hexagon_mesh = self.wrap(rhombus_mesh)
+            return hexagon_mesh
+        return rhombus_mesh
 
     def mesh2(self, n):
         """
@@ -382,6 +385,7 @@ class HexagonalGCs(torch.nn.Module):
             2 * activity / 9 + 1 / 3
         )  # Solstad2006 rescaling, range: [-1.5,3] -> [0,1]
         activity = activity - self.shift  # shift to range: [-shift,1-shift]
+        # activity = activity + dp if dp is not None else activity
         activity = (
             self.relu(activity) if self.shift else activity
         )  # rectify, range: [0,1-shift]
@@ -442,13 +446,22 @@ class HexagonalGCs(torch.nn.Module):
         """
         if Gs is None:
             if J is None:
-                r = torch.tensor(r, dtype=self.dtype) if not isinstance(r, torch.Tensor) else r
+                r = (
+                    torch.tensor(r, dtype=self.dtype)
+                    if not isinstance(r, torch.Tensor)
+                    else r
+                )
                 J = self.jacobian(r)
             Gs = self.metric_tensor(J)
         g11 = Gs[:, 0, 0]
         g22 = Gs[:, 1, 1]
         g12 = Gs[:, 0, 1]
-        return torch.var(g11) + torch.var(g22) + torch.mean((g11 - g22) ** 2) + 2 * torch.mean(g12)
+        return (
+            torch.var(g11)
+            + torch.var(g22)
+            + torch.mean((g11 - g22) ** 2)
+            + 2 * torch.mean(g12**2)
+        )
 
     def decode(self, activity):
         """
@@ -498,7 +511,7 @@ class HexagonalGCs(torch.nn.Module):
         self.optimizer.step()
         return loss.item()
 
-    def phase_kde(self, phases=None, res=64, **kwargs):
+    def phase_kde(self, phases=None, res=64, unit_cell=None, **kwargs):
         """Approximate KDE of phases by retiling of unit cell
         Args:
             unit_cell: unit cell class
@@ -507,15 +520,65 @@ class HexagonalGCs(torch.nn.Module):
             Estimated kernel, see scipy.stats.gaussian_kde for usage
         """
         phases = self.phases.detach().numpy() if phases is None else phases
-        phase_tiles = [phases - 2 * self.unit_cell.basis[i] for i in range(6)]
+        unit_cell = self.unit_cell if unit_cell is None else unit_cell
+        phase_tiles = [phases - 2 * unit_cell.basis[i] for i in range(6)]
         expanded_phases = np.concatenate((phases, *phase_tiles), axis=0)
         kernel = gaussian_kde(expanded_phases.T, **kwargs)
-        mesh = None
+        kde, mesh = None, None
         if res is not None:
             # use kde on mesh
-            mesh = self.unit_cell.mesh(res)
+            mesh = unit_cell.mesh(res)
             kde = kernel(mesh.T)
         return kde, mesh, kernel, expanded_phases
+
+    def grid_score(self, phases=None, slice_inner_circle=True, res=64, bw_method=0.2):
+        """Compute grid score
+        Parameters:
+            phases: array of phases, of shape (N, 2) where N is number of units.
+            rotation: rotation angle in degrees to rotate phases initially
+            res (int): resolution of grid
+            bw_method (float): bandwidth for KDE
+        Returns:
+            gcs (float): grid cell score
+        """
+        phases = self.phases.detach().clone().numpy() if phases is None else phases
+        kde, mesh = self.phase_kde(phases, res=res, bw_method=bw_method)[:2]
+        # center phases based on kde pattern peak
+        kde_max_idx = np.argmax(kde)
+        new_center = mesh[kde_max_idx]
+        phases_centered = phases - new_center
+        # wrap phases
+        phases_wrapped = self.unit_cell.wrap(phases_centered)
+        # recompute kde based on rotated phases and unit cell
+        kernel = self.phase_kde(phases_wrapped, res=None, bw_method=bw_method)[2]
+        # create square grid and mask based on unit cell
+        bins = np.linspace(-self.unit_cell.radius, self.unit_cell.radius, res)
+        xx, yy = np.meshgrid(bins, bins)
+        square_mesh = np.stack((xx, yy), axis=-1)  # (res,res,2)
+        mask = self.unit_cell.is_in_hexagon(square_mesh)
+        # slice out inner circle
+        if slice_inner_circle:
+            inner_circle_mask = np.ones_like(mask)
+            inner_circle_mask[np.linalg.norm(square_mesh, axis=-1) < bw_method / 2] = 0
+            mask = np.logical_and(mask, inner_circle_mask)
+        fixed_kde = kernel(square_mesh.reshape(-1, 2).T).reshape(res, res)
+        # compute correlations
+        correlates = []
+        angles = range(30, 180 + 30, 30)
+        for angle in angles:
+            # use order=0 to use nearest neighbor interpolation since we are dealing with a binary mask
+            rotated_mask = scipy.ndimage.rotate(mask, angle, reshape=False, order=0)
+            rotated_kde = scipy.ndimage.rotate(fixed_kde, angle, reshape=False, order=0)
+            intersection_mask = np.logical_and(rotated_mask, mask)
+            correlate = np.corrcoef(
+                rotated_kde[intersection_mask], fixed_kde[intersection_mask]
+            )[0, 1]
+            correlates.append(correlate)
+        # extract 30 and 60 degree correlations
+        r30 = correlates[::2]
+        r60 = correlates[1::2]
+        gcs = np.mean(r60) - np.mean(r30)  # range: [-2,2]
+        return gcs
 
 
 def permutation_test(X, Y, statistic, nperms=1000, alternative="two-sided"):
@@ -560,7 +623,7 @@ def permutation_test(X, Y, statistic, nperms=1000, alternative="two-sided"):
     elif alternative == "less":
         pvalue = leq
     else:
-        pvalue = min(geq, leq) * 2
+        pvalue = 2.0 * min(leq, 1 - leq)
     return XY_statistic, pvalue, H0
 
 
