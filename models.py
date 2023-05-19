@@ -6,15 +6,8 @@ from methods import HexagonalGCs
 from torch_topological.nn import VietorisRipsComplex
 
 
-
-
 class LinDecoder(HexagonalGCs):
-    def __init__(self,
-                hex_metric = False,
-                least_squares = False,
-                pos_scale = 1,
-                **kwargs
-    ):
+    def __init__(self, hex_metric=False, least_squares=False, pos_scale=1, **kwargs):
         super(LinDecoder, self).__init__(**kwargs)
 
         # Parameters
@@ -22,45 +15,47 @@ class LinDecoder(HexagonalGCs):
         self.least_squares = least_squares
         if not least_squares:
             self.xyweights = torch.nn.Parameter(
-                torch.ones(self.ncells, 2)/(self.ncells*2),
-              requires_grad=True)
+                torch.ones(self.ncells, 2) / (self.ncells * 2), requires_grad=True
+            )
         else:
-            self.xyweights = torch.ones(self.ncells, 2)/(self.ncells*2)            
+            self.xyweights = torch.ones(self.ncells, 2) / (self.ncells * 2)
         self.hex_metric = hex_metric
         if hex_metric:
-            diam = self.unit_cell.basis[1,1]*2#
-            a = torch.tensor([[0., 0.]])
-            b = torch.tensor([[-0.5, np.sqrt(3.0)/2]])*diam
-            c = torch.tensor([[-0.5, -np.sqrt(3.0)/2]])*diam
-            d = torch.tensor([[0.5, np.sqrt(3.0)/2]])*diam
-            e = torch.tensor([[0.5, -np.sqrt(3.0)/2]])*diam
-            f = torch.tensor([[-1., 0.]])*diam
-            g = torch.tensor([[1., 0.]])*diam
-            self.addition = torch.flip(torch.concatenate((a,b,c,d,e,f,g),0),(1,0))
-            
+            diam = self.unit_cell.basis[1, 1] * 2  #
+            a = torch.tensor([[0.0, 0.0]])
+            b = torch.tensor([[-0.5, np.sqrt(3.0) / 2]]) * diam
+            c = torch.tensor([[-0.5, -np.sqrt(3.0) / 2]]) * diam
+            d = torch.tensor([[0.5, np.sqrt(3.0) / 2]]) * diam
+            e = torch.tensor([[0.5, -np.sqrt(3.0) / 2]]) * diam
+            f = torch.tensor([[-1.0, 0.0]]) * diam
+            g = torch.tensor([[1.0, 0.0]]) * diam
+            self.addition = torch.flip(
+                torch.concatenate((a, b, c, d, e, f, g), 0), (1, 0)
+            )
+
     def loss_fn(self, pos):
-        pos *= self.pos_scale 
+        pos *= self.pos_scale
         activity = self(pos)
         if self.least_squares:
             self.xyweights = torch.linalg.lstsq(activity, pos).solution
-#            self.xyweights = torch.linalg.pinv(activity) @ pos
-        decode_pos = torch.matmul(activity, self.xyweights)    
-        if self.hex_metric:                        
+        #            self.xyweights = torch.linalg.pinv(activity) @ pos
+        decode_pos = torch.matmul(activity, self.xyweights)
+        if self.hex_metric:
             diffall = torch.zeros(7, len(pos))
             for i in range(7):
-                diffall[i] = torch.sum(torch.square((decode_pos+self.addition[i]) - pos),1)
-            return torch.sum(torch.min(diffall,0).values)
+                diffall[i] = torch.sum(
+                    torch.square((decode_pos + self.addition[i]) - pos), 1
+                )
+            return torch.sum(torch.min(diffall, 0).values)
         else:
             return torch.sum(torch.square(decode_pos - pos))
 
-        
     def loss_fn2(self, pos):
-        pos *= self.pos_scale 
+        pos *= self.pos_scale
         activity = self(pos)
         xyweights = torch.linalg.pinv(activity) @ pos
-        decode_pos = torch.matmul(activity, xyweights)    
+        decode_pos = torch.matmul(activity, xyweights)
         return torch.sum(torch.square(decode_pos - pos))
-        
 
 
 class Similitude(HexagonalGCs):
@@ -72,19 +67,29 @@ class Similitude(HexagonalGCs):
         det_J = self.the_jacobian(J)
         return torch.var(det_J)
 
+
 class Homology(HexagonalGCs):
-    def __init__(self,**kwargs):
+    def __init__(self, **kwargs):
         super(Homology, self).__init__(**kwargs)
-    
+
     def loss_fn(self, r, p=2):
         out = self(r)
-        dist = torch.cdist(out,out)
-        hom = VietorisRipsComplex(dim=2)(dist, treat_as_distances = True)
-        pers1 = torch.cat([torch.zeros(3),torch.sort(hom[1][1][:,1]-hom[1][1][:,0])[0]])
-        pers2 = torch.cat([torch.zeros(3),torch.sort(hom[2][1][:,1]-hom[2][1][:,0])[0]])
-        loss = -torch.sum(pers1[-2:]**p) - pers2[-1]**p + torch.sum(pers1[:-2]**p) + torch.sum(pers2[:-1]**p)
+        dist = torch.cdist(out, out)
+        hom = VietorisRipsComplex(dim=2)(dist, treat_as_distances=True)
+        pers1 = torch.cat(
+            [torch.zeros(3), torch.sort(hom[1][1][:, 1] - hom[1][1][:, 0])[0]]
+        )
+        pers2 = torch.cat(
+            [torch.zeros(3), torch.sort(hom[2][1][:, 1] - hom[2][1][:, 0])[0]]
+        )
+        loss = (
+            -torch.sum(pers1[-2:] ** p)
+            - pers2[-1] ** p
+            + torch.sum(pers1[:-2] ** p)
+            + torch.sum(pers2[:-1] ** p)
+        )
         return loss
-        
+
 
 class JitterCI(HexagonalGCs):
     def __init__(self, r_magnitude=0.01, p_magnitude=0.01, **kwargs):
@@ -126,8 +131,8 @@ class JitterCI(HexagonalGCs):
             self.phases.shape[0], magnitude=self.p_magnitude
         )
         dp2, _ = self.jitter(self.phases.shape[0], magnitudes_phases)
-        #dp1 = torch.normal(0, self.p_magnitude, size=(r.shape[0], self.ncells), dtype=self.dtype)
-        #dp2 = torch.normal(0, self.p_magnitude, size=(r.shape[0], self.ncells), dtype=self.dtype)
+        # dp1 = torch.normal(0, self.p_magnitude, size=(r.shape[0], self.ncells), dtype=self.dtype)
+        # dp2 = torch.normal(0, self.p_magnitude, size=(r.shape[0], self.ncells), dtype=self.dtype)
         # perturb parameters and inputs
         s1 = self.s(r, dr1, dp1)
         s2 = self.s(r, dr2, dp2)
@@ -153,8 +158,12 @@ class JacobianCI(HexagonalGCs):
         return self.scale
 
     def loss_fn(self, r):
-        dp, _ = self.jitter(self.phases.shape[0], magnitude=self.p_magnitude) if self.p_magnitude else (None, None)
-        #dp = torch.normal(0, self.p_magnitude, size=(r.shape[0], self.ncells), dtype=self.dtype)
+        dp, _ = (
+            self.jitter(self.phases.shape[0], magnitude=self.p_magnitude)
+            if self.p_magnitude
+            else (None, None)
+        )
+        # dp = torch.normal(0, self.p_magnitude, size=(r.shape[0], self.ncells), dtype=self.dtype)
         J = self.jacobian(r, dp)
         # (nsamples,2,2)
         metric_tensor = self.metric_tensor(J)
@@ -164,8 +173,6 @@ class JacobianCI(HexagonalGCs):
             lower_triangular_elems**2, dim=(-2, -1)
         )
         return torch.mean(loss)
-
-
 
 
 class PlaceCells(HexagonalGCs):
@@ -286,7 +293,7 @@ class Similitude3(HexagonalGCs):
 
         off_diag = metric_tensor[..., 1, 0]
         return g11, g22, off_diag
-    
+
     def loss_fn(self, r, keepdims=False):
         ra = r[0]
         rb = ra + r[1]
