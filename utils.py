@@ -33,7 +33,9 @@ def rhombus_transform(rs, theta=60, degrees=True):
     Returns:
         rs (nsamples,2): in rhombus coordinates
     """
+    #rotmat_offset = rotation_matrix(-offset, degrees)
     rotmat = rotation_matrix(theta, degrees)
+    #e1 = rotmat_offset @ np.array([1, 0])
     e1 = np.array([1, 0])
     e2 = rotmat @ e1
     # to rhombus coordinates
@@ -136,3 +138,29 @@ def energy_statistic(X,Y):
     # extend to use geodesic distance rather than Euclidean
     all_to_all_fn = lambda X,Y: np.mean(np.linalg.norm(X[:,None]-Y[None],axis=-1))
     return 2*all_to_all_fn(X,Y) - all_to_all_fn(X,X) - all_to_all_fn(Y,Y)
+
+
+def find_peaks(image):
+    """
+    Taken from cinpla/spatial-maps. But corrects center.
+
+    Find peaks sorted by distance from center of image.
+    Returns
+    -------
+    peaks : array
+        coordinates for peaks in image as [row, column]
+    """
+    import scipy.ndimage as ndimage
+    import scipy.ndimage.filters as filters
+    image = image.copy()
+    image[~np.isfinite(image)] = 0
+    image_max = filters.maximum_filter(image, 3)
+    is_maxima = (image == image_max)
+    labels, num_objects = ndimage.label(is_maxima)
+    indices = np.arange(1, num_objects+1)
+    peaks = ndimage.maximum_position(image, labels=labels, index=indices)
+    peaks = np.array(peaks)
+    center = (np.array(image.shape)-1) / 2
+    distances = np.linalg.norm(peaks - center, axis=1)
+    peaks = peaks[distances.argsort()]
+    return peaks
