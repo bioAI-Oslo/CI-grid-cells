@@ -18,25 +18,70 @@ def project_cmap():
 
 
 def scatter3d(
-    data, ncols=4, nrows=4, s=1, c=None, alpha=0.5, azim_elev_title=True, **kwargs
+    data, ncols=4, nrows=4, fig=None, axs=None, azim_elev_title=False, **kwargs
 ):
     assert data.shape[-1] == 3, "data must have three axes. No more, no less."
     if data.ndim > 2:
         data = data.reshape(-1, 3)
-    fig, axs = plt.subplots(
-        ncols=ncols, nrows=nrows, subplot_kw={"projection": "3d"}, **kwargs
-    )
-    num_plots = ncols * nrows
+    if fig is None or axs is None:
+        fig, axs = plt.subplots(
+            ncols=ncols, nrows=nrows, subplot_kw={"projection": "3d"}
+        )
+    else:
+        nrows, ncols = axs.shape
     azims = np.linspace(0, 180, ncols + 1)[:-1]
     elevs = np.linspace(0, 90, nrows + 1)[:-1]
-    view_angles = np.stack(np.meshgrid(azims, elevs), axis=-1).reshape(-1, 2)
+    view_angles = np.stack(np.meshgrid(azims, elevs), axis=-1)
+    grid = np.meshgrid(np.linspace(0,1,nrows,endpoint=False), np.linspace(0,1,ncols,endpoint=False))
+    grid = np.stack(grid, axis=-1)
+    for i in range(nrows):
+        for j in range(ncols):
+            axs[i,j].scatter(xs=data[:, 0], ys=data[:, 1], zs=data[:, 2], **kwargs)
+            axs[i,j].azim = view_angles[i, j, 0]
+            axs[i,j].elev = view_angles[i, j, 1]
+            axs[i,j].axis("off")
+            if azim_elev_title:
+                axs[i,j].set_title(f"azim={axs[i,j].azim}, elev={axs[i,j].elev}")
+            axs[i,j].set_position([*grid[i,j], 1/ncols, 1/nrows])
+    return fig, axs
+
+def scatter3d2(
+    data, ncols=4, nrows=4, fig=None, axs=None, azim_elev_title=False, **kwargs
+):
+    assert data.shape[-1] == 3, "data must have three axes. No more, no less."
+    if data.ndim > 2:
+        data = data.reshape(-1, 3)
+    if fig is None or axs is None:
+        fig, axs = plt.subplots(
+            ncols=ncols, nrows=nrows, subplot_kw={"projection": "3d"}
+        )
+    else:
+        nrows, ncols = axs.shape
+    azims = np.linspace(0, 180, ncols + 1)[:-1]
+    elevs = np.linspace(0, 90, nrows + 1)[:-1]
+    view_angles = np.stack(np.meshgrid(azims, elevs), axis=-1)
+    grid = np.meshgrid(np.linspace(0,1,nrows), np.linspace(0,1,ncols))
+    grid = np.stack(grid, axis=-1).reshape(-1, 2)
+    for i in range(nrows):
+        for j in range(ncols):
+            axs[i,j].scatter(xs=data[:, 0], ys=data[:, 1], zs=data[:, 2], **kwargs)
+            axs[i,j].azim = view_angles[i, j, 0]
+            axs[i,j].elev = view_angles[i, j, 1]
+            axs[i,j].axis("off")
+            if azim_elev_title:
+                axs[i,j].set_title(f"azim={axs[i,j].azim}, elev={axs[i,j].elev}")
+            axs[i,j].set_position([grid[i,j,0], grid[i,j,1], 1/ncols, 1/nrows])
+
+
     for i, ax in enumerate(axs.flat):
-        ax.scatter(xs=data[:, 0], ys=data[:, 1], zs=data[:, 2], s=s, c=c, alpha=alpha)
+        ax.scatter(xs=data[:, 0], ys=data[:, 1], zs=data[:, 2], **kwargs)
         ax.azim = view_angles[i, 0]
         ax.elev = view_angles[i, 1]
         ax.axis("off")
         if azim_elev_title:
             ax.set_title(f"azim={ax.azim}, elev={ax.elev}")
+        ax.set_position()
+        ax.set_position([0, 0, 1, 1])
     return fig, axs
 
 
@@ -195,3 +240,9 @@ def annotate_imshow(D, round_val=2, txt_size=6,cmap='coolwarm',**kwargs):
                 va="center",
                 fontsize=txt_size,
             )
+
+def colorbar_axis(fig, ax, im):
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    fig.colorbar(im, cax=cax, orientation='vertical')
