@@ -149,8 +149,13 @@ class Hexagon:
 
     def geodesic(self, p1, p2):
         """
+        Shortest distance between two points on a 2D sheet with hexagonal
+        periodic boundary conditions.
+
         Parameters:
             p1,p2 (nsamples,2): nsamples of 2D vectors
+        Returns:
+            geodesic (nsamples,): shortest distance between p1 and p2
         """
         p1 = self.wrap(p1)
         p2 = self.wrap(p2)
@@ -160,7 +165,7 @@ class Hexagon:
         dist = np.linalg.norm(p2 - p1[:, None], axis=-1)  # (nsamples,7)
         return np.min(dist, axis=-1)
 
-    def mesh(self, n, endpoints=False, wrap=True):
+    def mesh(self, n, wrap=True):
         """
         Mesh hexagon by inverting a mesh in rhombus coordinates to the
         standard basis. Wrap mesh to the unit cell.
@@ -171,16 +176,11 @@ class Hexagon:
             hexagon_mesh (n**2,2): hexagonal mesh
         """
         # make square mesh based on hexagon size
-        n = n if endpoints else n + 1
         square_mesh = np.mgrid[
-            self.center[0] : self.center[0] + self.radius * 3 / 2 : complex(n),
-            self.center[1] : self.center[1] + self.radius * 3 / 2 : complex(n),
+            self.center[0] : self.center[0] + self.radius * 3 / 2 : complex(n + 1),
+            self.center[1] : self.center[1] + self.radius * 3 / 2 : complex(n + 1),
         ]  # .T.reshape(-1, 2)
-        square_mesh = (
-            square_mesh.reshape(2, -1).T
-            if endpoints
-            else square_mesh[:, :-1, :-1].reshape(2, -1).T
-        )
+        square_mesh = square_mesh[:, :-1, :-1].reshape(2, -1).T
         # inverse transform square mesh (it is square in rhombus coordinates)
         rhombus_mesh = rhombus_transform(square_mesh)
         # rotate as hexagon is rotated
@@ -190,96 +190,6 @@ class Hexagon:
             hexagon_mesh = self.wrap(rhombus_mesh)
             return hexagon_mesh
         return rhombus_mesh
-
-    def mesh2(self, n):
-        """
-        Mesh hexagon by inverting a mesh in rhombus coordinates to the
-        standard basis. Wrap mesh to the unit cell.
-
-        Parameters:
-            n: (int) squared mesh resolution (amount of mesh points)
-        Returns:
-            hexagon_mesh (n**2,2): hexagonal mesh
-        """
-        # make square mesh based on hexagon size
-        width_height = self.radius * 3 / 2
-        square_mesh = np.mgrid[
-            -width_height / 2 : width_height / 2 : complex(n),
-            -width_height / 2 : width_height / 2 : complex(n),
-        ].T.reshape(-1, 2)
-        # inverse transform square mesh (it is square in rhombus coordinates)
-        rhombus_mesh = rhombus_transform(square_mesh)
-        # rotate as hexagon is rotated and shift center
-        rhombus_mesh = rhombus_mesh @ self.rotmat_offset.T - self.center
-        # wrap rhombus to hexagon
-        hexagon_mesh = self.wrap(rhombus_mesh)
-        return hexagon_mesh
-
-    def ripleys(
-        self, rs, radius, wrap=True, geometric_enclosure="hyperballs", alternative="H"
-    ):
-        """
-        Ripleys k-function counting elements in balls with given radius with
-        a periodic hexagonal boundary condition.
-
-        Parameters:
-            rs (nsamples,2): spatial/phase positions
-            radius (float): ball radius for ripleys k
-            wrap (bool): wether to wrap rs to self (hexagon) - this should be true
-                         unless they are pre-wrapped.
-            geometric_enclosure (str): "hyperballs" or "hexagons" geometric enclosure
-            alternative (str): 'K', 'L' or 'H' - defaults to 'H' for corrected
-                               and zero-centered expectation. See Kiskowski2009
-                               for further explanations.
-        Returns:
-            ripleys (float): value of statistic
-        """
-        assert radius <= self.radius, "Larger radius than hexagon enclosing circle"
-        rs = self.wrap(rs) if wrap else rs
-        # duplicate and tile hexagon with 6 surrounding hexagons, and
-        # the corresponding (wrapped) phases.
-        outer_rs = rs[None] - 2 * self.basis[:, None]  # (1,n,2) - (6,1,2) => (6,n,2)
-        # add inner/surrounded hexagon as index 0
-        hexhex_rs = np.concatenate([rs[None], outer_rs], axis=0)  # => (7,n,2)
-        # mask of rs that are inside ball with centers given by inner hexagon and radius
-        # (7,1,n,2) - (1,n,1,2) => (7,n,n,2)
-        diff_rs = hexhex_rs[:, None] - hexhex_rs[:1, :, None]
-        if geometric_enclosure == "hyperballs":
-            in_geometry = np.linalg.norm(diff_rs, axis=-1) < radius
-        elif geometric_enclosure == "hexagons":
-            # construct hexagon basis for given ripley radius, (6,2)
-            hexbasis = Hexagon._init_hexbasis(self.hpoints * radius / self.radius)
-            # vectorised (many hexagons) is_in_hexagon method
-            # (7,n,n,2) @ (1,1,2,6) => (7,n,n,6)
-            projections = diff_rs @ hexbasis.T[None, None]
-            in_geometry = np.max(projections, axis=-1) <= np.sum(
-                hexbasis[0] ** 2, axis=-1
-            )
-        n = rs.shape[0]
-        # correct by subtracting n on sum to not count phases defining the ball center
-        # this is equivalent to overwriting and setting the diagonal to false.
-        ripleys_K = (np.sum(in_geometry) - n) * self.area / (n * (n - 1))
-        if alternative == "K":
-            return ripleys_K
-        if alternative == "standardized":
-            # as described in Lagache2013
-            mu = np.pi * radius**2
-            beta_r = np.pi * radius**2 / self.area
-            circumference = 6 * self.radius
-            gamma_r = circumference * radius / self.area
-            s2 = (2 * self.area**2 * beta_r / n**2) * (
-                1 + 0.305 * gamma_r + beta_r * (-1 + 0.0132 * n * gamma_r)
-            )
-            return (ripleys_K - mu) / np.sqrt(s2)
-        ripleys_L = (
-            np.sqrt(ripleys_K / np.pi)
-            if geometric_enclosure == "hyperballs"
-            else np.sqrt(2 * ripleys_K / (3 * np.sqrt(3)))
-        )
-        if alternative == "L":
-            return ripleys_L
-        ripleys_H = ripleys_L - radius
-        return ripleys_H
 
     def plot(self, fig=None, ax=None, center=None, colors=None, **kwargs):
         if ax is None:
@@ -324,7 +234,8 @@ class HexagonalGCs(torch.nn.Module):
         ks = torch.tensor(ks, dtype=dtype)
         self.ks = ks * f * 2 * np.pi
         # define unit cell from generating pattern
-        self.unit_cell = Hexagon(f * 2 / 3, init_rot, np.zeros(2))
+        # self.unit_cell = Hexagon(f * 2 / 3, init_rot, np.zeros(2))
+        self.unit_cell = Hexagon(2 / (3 * f), init_rot, np.zeros(2))
         # self.inner_hexagon = Hexagon(f / np.sqrt(3), init_rot - 30, np.zeros(2))
         # init trainable phases
         phases = self.unit_cell.sample(ncells)  # default random uniform initial phases
@@ -511,17 +422,24 @@ class HexagonalGCs(torch.nn.Module):
         self.optimizer.step()
         return loss.item()
 
-    def phase_kde(self, phases=None, res=64, unit_cell=None, **kwargs):
+    def phase_kde(
+        self, phases=None, res=64, unit_cell=None, double_extension=True, **kwargs
+    ):
         """Approximate KDE of phases by retiling of unit cell
         Args:
-            unit_cell: unit cell class
             phases: array of phases, of shape (N, 2) where N is number of units.
+            res (int): resolution of grid
+            unit_cell: unit cell class
+            double_extension (bool): whether to extend the unit cell with one (False) or two (True) cells in each direction
         Returns:
             Estimated kernel, see scipy.stats.gaussian_kde for usage
         """
         phases = self.phases.detach().numpy() if phases is None else phases
         unit_cell = self.unit_cell if unit_cell is None else unit_cell
         phase_tiles = [phases - 2 * unit_cell.basis[i] for i in range(6)]
+        if double_extension:
+            phase_tiles += [phases - 3 * unit_cell.hpoints[i] for i in range(6)]
+            phase_tiles += [phases - 4 * unit_cell.basis[i] for i in range(6)]
         expanded_phases = np.concatenate((phases, *phase_tiles), axis=0)
         kernel = gaussian_kde(expanded_phases.T, **kwargs)
         kde, mesh = None, None
@@ -555,24 +473,36 @@ class HexagonalGCs(torch.nn.Module):
         bins = np.linspace(-self.unit_cell.radius, self.unit_cell.radius, res)
         xx, yy = np.meshgrid(bins, bins)
         square_mesh = np.stack((xx, yy), axis=-1)  # (res,res,2)
-        mask = self.unit_cell.is_in_hexagon(square_mesh)
+        # evaluate kernel
+        ratemap = kernel(square_mesh.reshape(-1, 2).T).reshape(res, res)
+        # Expand ratemap such that autcorr is same size as ratemap using mode='valid'.
+        # This amounts to an autocorr going from -radius to radius.
+        large_res = 2 * res - 1
+        bins = np.linspace(
+            -self.unit_cell.radius * 3 / 2, self.unit_cell.radius * 3 / 2, large_res
+        )
+        xx, yy = np.meshgrid(bins, bins)
+        large_square_mesh = np.stack((xx, yy), axis=-1)  # (res,res,2)
+        large_ratemap = kernel(large_square_mesh.reshape(-1, 2).T).reshape(
+            large_res, large_res
+        )
+        # autocorrelate
+        autocorr = scipy.signal.correlate(ratemap, large_ratemap, mode="valid")
+        # outer circle mask
+        mask = np.linalg.norm(square_mesh, axis=-1) < self.unit_cell.radius
         # slice out inner circle
         if slice_inner_circle:
             inner_circle_mask = np.ones_like(mask)
             inner_circle_mask[np.linalg.norm(square_mesh, axis=-1) < bw_method / 2] = 0
             mask = np.logical_and(mask, inner_circle_mask)
-        fixed_kde = kernel(square_mesh.reshape(-1, 2).T).reshape(res, res)
         # compute correlations
         correlates = []
         angles = range(30, 180 + 30, 30)
         for angle in angles:
-            # use order=0 to use nearest neighbor interpolation since we are dealing with a binary mask
-            rotated_mask = scipy.ndimage.rotate(mask, angle, reshape=False, order=0)
-            rotated_kde = scipy.ndimage.rotate(fixed_kde, angle, reshape=False, order=0)
-            intersection_mask = np.logical_and(rotated_mask, mask)
-            correlate = np.corrcoef(
-                rotated_kde[intersection_mask], fixed_kde[intersection_mask]
-            )[0, 1]
+            rotated_autocorr = scipy.ndimage.rotate(
+                autocorr, angle, reshape=False, order=0
+            )
+            correlate = np.corrcoef(rotated_autocorr[mask], autocorr[mask])[0, 1]
             correlates.append(correlate)
         # extract 30 and 60 degree correlations
         r30 = correlates[::2]
@@ -580,17 +510,48 @@ class HexagonalGCs(torch.nn.Module):
         gcs = np.mean(r60) - np.mean(r30)  # range: [-2,2]
         return gcs
 
+    def ripleys(self, radius, phases=None):
+        """
+        Ripleys-H function counting elements in balls with given radius with
+        a periodic hexagonal boundary condition. See Kiskowski2009 for further
+        explanations.
 
-def permutation_test(X, Y, statistic, nperms=1000, alternative="two-sided"):
+        Parameters:
+            radius (float): ball radius for ripleys k
+            phases (nsamples,2): phase positions
+        Returns:
+            ripleys-H (float): value of statistic
+        """
+        assert radius <= self.unit_cell.radius, "Larger radius than hexagon enclosing circle"
+        phases = self.phases.detach().clone().numpy() if phases is None else phases
+        phases = self.unit_cell.wrap(phases)
+        # duplicate and tile hexagon with 6 surrounding hexagons, and
+        # the corresponding (wrapped) phases.
+        outer_phases = phases[None] - 2 * self.unit_cell.basis[:, None]  # (1,n,2) - (6,1,2) => (6,n,2)
+        # add inner/surrounded hexagon as index 0
+        hexhex_phases = np.concatenate([phases[None], outer_phases], axis=0)  # => (7,n,2)
+        # mask of rs that are inside ball with centers given by inner hexagon and radius
+        # (7,1,n,2) - (1,n,1,2) => (7,n,n,2)
+        diff_phases = hexhex_phases[:, None] - hexhex_phases[:1, :, None]
+        in_geometry = np.linalg.norm(diff_phases, axis=-1) < radius
+        n = phases.shape[0]
+        # correct by subtracting n on sum to not count phases defining the ball center
+        # this is equivalent to overwriting and setting the diagonal to false.
+        ripleys_K = (np.sum(in_geometry) - n) * self.unit_cell.area / (n * (n - 1))
+        ripleys_L = np.sqrt(ripleys_K / np.pi)
+        ripleys_H = ripleys_L - radius
+        return ripleys_H
+
+
+def permutation_test(rvs_X, rvs_Y, statistic=None, nperms=1000, alternative="two-sided"):
     """
-    Permutation test. Method for measuring (under some given statistic function)
-    whether two samples X and Y come from the same distribution.
+    Permutation test. Method to determine whether two samples
+    X and Y come from the same distribution.
 
     Parameters:
-        X (nsamples,nfeatures): samples of first group
-        Y (nsamples,nfeatures) or Callable: samples of second group, or a sampler
-                                            function.
-        statistic (Callable): statistic function: (m,n) x (m,n) -> scalar
+        rvs_X (nsamples1,): response values of first group
+        rvs_Y (nsamples2,): response values of second group
+        statistic (Callable): statistic function: (nsamples1,) x (nsamples2,) -> scalar
         nperms (int): number of permutations (samples of null-distribution)
         alternative (str): p-value alternative
     Returns:
@@ -599,20 +560,14 @@ def permutation_test(X, Y, statistic, nperms=1000, alternative="two-sided"):
                         between the two groups
         H0 (nperms,): array of null-distribution samples
     """
-    Y_sampler_fn = None
-    N = X.shape[0]
-    if callable(Y):
-        Y_sampler_fn = Y
-        Y = Y_sampler_fn(N)  # sample nsamples
-    XY_statistic = statistic(X, Y)
+    if statistic is None:
+        statistic = lambda X, Y: np.mean(X) - np.mean(Y)
+    XY_statistic = statistic(rvs_X, rvs_Y)
     H0 = np.zeros(nperms)
-    XY = np.concatenate([X, Y])
+    XY = np.concatenate([rvs_X, rvs_Y])
     for i in tqdm.trange(nperms):
         XY = np.random.permutation(XY)
-        H0[i] = statistic(XY[:N], XY[N:])
-        if Y_sampler_fn is not None:
-            # resample Y
-            XY = np.concatenate([X, Y_sampler_fn(N)])
+        H0[i] = statistic(XY[:len(rvs_X)], XY[len(rvs_X):])
     leq = np.sum(XY_statistic <= H0)
     # +1 correction assumes XY_statistic also included in H0
     leq = (leq + 1) / (nperms + 1)
