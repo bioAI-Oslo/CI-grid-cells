@@ -220,6 +220,7 @@ class HexagonalGCs(torch.nn.Module):
         dropout=False,
         lr=1e-3,
         dtype=torch.float32,
+        seed=None,
         **kwargs
     ):
         super(HexagonalGCs, self).__init__(**kwargs)
@@ -238,7 +239,9 @@ class HexagonalGCs(torch.nn.Module):
         self.unit_cell = Hexagon(2 / (3 * f), init_rot, np.zeros(2))
         # self.inner_hexagon = Hexagon(f / np.sqrt(3), init_rot - 30, np.zeros(2))
         # init trainable phases
-        phases = self.unit_cell.sample(ncells)  # default random uniform initial phases
+        phases = self.unit_cell.sample(
+            ncells, seed
+        )  # default random uniform initial phases
         self.set_phases(phases)  # initialises trainable params and optimizer
         self.relu = torch.nn.ReLU()
         self.decoder = None
@@ -423,7 +426,14 @@ class HexagonalGCs(torch.nn.Module):
         return loss.item()
 
     def phase_kde(
-        self, phases=None, res=64, unit_cell=None, double_extension=True, **kwargs
+        self,
+        phases=None,
+        res=64,
+        unit_cell=None,
+        double_extension=True,
+        triple_extension=False,
+        wrap=True,
+        **kwargs
     ):
         """Approximate KDE of phases by retiling of unit cell
         Args:
@@ -431,15 +441,21 @@ class HexagonalGCs(torch.nn.Module):
             res (int): resolution of grid
             unit_cell: unit cell class
             double_extension (bool): whether to extend the unit cell with one (False) or two (True) cells in each direction
+            wrap (bool): whether to wrap phases to unit cell (should always be done, unless done beforehand)
         Returns:
             Estimated kernel, see scipy.stats.gaussian_kde for usage
         """
         phases = self.phases.detach().numpy() if phases is None else phases
+        phases = self.unit_cell.wrap(phases) if wrap else phases
         unit_cell = self.unit_cell if unit_cell is None else unit_cell
         phase_tiles = [phases - 2 * unit_cell.basis[i] for i in range(6)]
         if double_extension:
             phase_tiles += [phases - 3 * unit_cell.hpoints[i] for i in range(6)]
             phase_tiles += [phases - 4 * unit_cell.basis[i] for i in range(6)]
+        if triple_extension:
+            phase_tiles += [phases - 6 * unit_cell.basis[i] for i in range(6)]
+            phase_tiles += [phases - 6 * unit_cell.basis[i] - 2*unit_cell.basis[(i+2)%6] for i in range(6)]
+            phase_tiles += [phases - 6 * unit_cell.basis[i] - 4*unit_cell.basis[(i+2)%6] for i in range(6)]
         expanded_phases = np.concatenate((phases, *phase_tiles), axis=0)
         kernel = gaussian_kde(expanded_phases.T, **kwargs)
         kde, mesh = None, None
@@ -449,34 +465,32 @@ class HexagonalGCs(torch.nn.Module):
             kde = kernel(mesh.T)
         return kde, mesh, kernel, expanded_phases
 
-    def grid_score(self, phases=None, slice_inner_circle=True, res=64, bw_method=0.2):
-        """Compute grid score
+    def phase_kde_autocorrelogram(self, phases=None, res=64, bw_method=0.1):
+        """
+        Compute autocorrelogram of KDE of a set of phases.
+
         Parameters:
-            phases: array of phases, of shape (N, 2) where N is number of units.
-            rotation: rotation angle in degrees to rotate phases initially
+            phases: array of phases, of shape (N, 2).
             res (int): resolution of grid
             bw_method (float): bandwidth for KDE
         Returns:
-            gcs (float): grid cell score
+            autocorr (res,res): autocorrelogram
+            ratemap (res,res): KDE evaluated on a square grid
+            square_mesh (res,res,2): square grid
+            large_ratemap (large_res,large_res): KDE evaluated on a larger grid
+            large_square_mesh (large_res,large_res,2): larger square grid
         """
         phases = self.phases.detach().clone().numpy() if phases is None else phases
-        kde, mesh = self.phase_kde(phases, res=res, bw_method=bw_method)[:2]
-        # center phases based on kde pattern peak
-        kde_max_idx = np.argmax(kde)
-        new_center = mesh[kde_max_idx]
-        phases_centered = phases - new_center
-        # wrap phases
-        phases_wrapped = self.unit_cell.wrap(phases_centered)
-        # recompute kde based on rotated phases and unit cell
-        kernel = self.phase_kde(phases_wrapped, res=None, bw_method=bw_method)[2]
+        # compute KDE
+        kernel = self.phase_kde(phases, res=None, double_extension=True, bw_method=bw_method)[2]
         # create square grid and mask based on unit cell
         bins = np.linspace(-self.unit_cell.radius, self.unit_cell.radius, res)
         xx, yy = np.meshgrid(bins, bins)
         square_mesh = np.stack((xx, yy), axis=-1)  # (res,res,2)
         # evaluate kernel
         ratemap = kernel(square_mesh.reshape(-1, 2).T).reshape(res, res)
-        # Expand ratemap such that autcorr is same size as ratemap using mode='valid'.
-        # This amounts to an autocorr going from -radius to radius.
+        # evaluate kernel on a larger grid to compute 'valid' autocorrelation
+        # with the same shape as ratemap
         large_res = 2 * res - 1
         bins = np.linspace(
             -self.unit_cell.radius * 3 / 2, self.unit_cell.radius * 3 / 2, large_res
@@ -487,13 +501,28 @@ class HexagonalGCs(torch.nn.Module):
             large_res, large_res
         )
         # autocorrelate
-        autocorr = scipy.signal.correlate(ratemap, large_ratemap, mode="valid")
+        autocorr = corrcoef_valid2d(
+            ratemap, large_ratemap
+        )  # Pearson (spatial) correlation
+        return autocorr, ratemap, square_mesh, large_ratemap, large_square_mesh
+
+    def grid_score(self, phases=None, slice_inner_circle=True, res=64, bw_method=0.1):
+        """Compute grid score of the KDE of a set of phases.
+        Parameters:
+            phases: array of phases, of shape (N, 2) where N is number of units.
+            rotation: rotation angle in degrees to rotate phases initially
+            res (int): resolution of grid
+            bw_method (float): bandwidth for KDE
+        Returns:
+            gcs (float): grid cell score
+        """
+        autocorr, _, square_mesh, _, _ = self.phase_kde_autocorrelogram(phases, res, bw_method=bw_method)
         # outer circle mask
         mask = np.linalg.norm(square_mesh, axis=-1) < self.unit_cell.radius
         # slice out inner circle
         if slice_inner_circle:
             inner_circle_mask = np.ones_like(mask)
-            inner_circle_mask[np.linalg.norm(square_mesh, axis=-1) < bw_method / 2] = 0
+            inner_circle_mask[np.linalg.norm(square_mesh, axis=-1) < bw_method] = 0
             mask = np.logical_and(mask, inner_circle_mask)
         # compute correlations
         correlates = []
@@ -522,14 +551,20 @@ class HexagonalGCs(torch.nn.Module):
         Returns:
             ripleys-H (float): value of statistic
         """
-        assert radius <= self.unit_cell.radius, "Larger radius than hexagon enclosing circle"
+        assert (
+            radius <= self.unit_cell.radius
+        ), "Larger radius than hexagon enclosing circle"
         phases = self.phases.detach().clone().numpy() if phases is None else phases
         phases = self.unit_cell.wrap(phases)
         # duplicate and tile hexagon with 6 surrounding hexagons, and
         # the corresponding (wrapped) phases.
-        outer_phases = phases[None] - 2 * self.unit_cell.basis[:, None]  # (1,n,2) - (6,1,2) => (6,n,2)
+        outer_phases = (
+            phases[None] - 2 * self.unit_cell.basis[:, None]
+        )  # (1,n,2) - (6,1,2) => (6,n,2)
         # add inner/surrounded hexagon as index 0
-        hexhex_phases = np.concatenate([phases[None], outer_phases], axis=0)  # => (7,n,2)
+        hexhex_phases = np.concatenate(
+            [phases[None], outer_phases], axis=0
+        )  # => (7,n,2)
         # mask of rs that are inside ball with centers given by inner hexagon and radius
         # (7,1,n,2) - (1,n,1,2) => (7,n,n,2)
         diff_phases = hexhex_phases[:, None] - hexhex_phases[:1, :, None]
@@ -543,7 +578,36 @@ class HexagonalGCs(torch.nn.Module):
         return ripleys_H
 
 
-def permutation_test(rvs_X, rvs_Y, statistic=None, nperms=1000, alternative="two-sided"):
+def corrcoef_valid2d(small_map, large_map):
+    """
+    Compute Pearson correlation coefficient between small_map and all
+    possible slices of large_map with the same size as small_map.
+
+    Parameters:
+        small_map (I,J): small map
+        large_map (I',J'): large map
+    Returns:
+        out_map (I' - I + 1, J' - J + 1): map of correlations
+    """
+    Is, Js = small_map.shape
+    Il, Jl = large_map.shape
+    out_map = np.zeros((Il - Is + 1, Jl - Js + 1))
+    for i in range(Il - Is + 1):
+        for j in range(Jl - Js + 1):
+            # Pearson correlation
+            out_map[i, j] = np.corrcoef(
+                small_map.flatten(), large_map[i : i + Is, j : j + Js].flatten()
+            )[0, 1]
+            # Cosine similarity
+            #out_map[i, j] = np.dot(small_map.flatten(), large_map[i : i + Is, j : j + Js].flatten()) / (
+            #    np.linalg.norm(small_map.flatten()) * np.linalg.norm(large_map[i : i + Is, j : j + Js].flatten())
+            #)
+    return out_map
+
+
+def permutation_test(
+    rvs_X, rvs_Y, statistic=None, nperms=1000, alternative="two-sided"
+):
     """
     Permutation test. Method to determine whether two samples
     X and Y come from the same distribution.
@@ -567,7 +631,7 @@ def permutation_test(rvs_X, rvs_Y, statistic=None, nperms=1000, alternative="two
     XY = np.concatenate([rvs_X, rvs_Y])
     for i in tqdm.trange(nperms):
         XY = np.random.permutation(XY)
-        H0[i] = statistic(XY[:len(rvs_X)], XY[len(rvs_X):])
+        H0[i] = statistic(XY[: len(rvs_X)], XY[len(rvs_X) :])
     leq = np.sum(XY_statistic <= H0)
     # +1 correction assumes XY_statistic also included in H0
     leq = (leq + 1) / (nperms + 1)
