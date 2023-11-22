@@ -151,7 +151,8 @@ class JacobianCI(HexagonalGCs):
     def set_scale(self, scale=None):
         if scale is None:
             # conformally isometric scaling LAW
-            scale = self.ncells * 1.4621597785714284
+            A = 2/9
+            scale = 3 * np.pi**2 * self.ncells * A**2
         self.scale = torch.nn.Parameter(
             torch.tensor(scale, dtype=self.dtype), requires_grad=True
         )
