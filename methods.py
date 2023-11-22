@@ -235,9 +235,7 @@ class HexagonalGCs(torch.nn.Module):
         ks = torch.tensor(ks, dtype=dtype)
         self.ks = ks * f * 2 * np.pi
         # define unit cell from generating pattern
-        # self.unit_cell = Hexagon(f * 2 / 3, init_rot, np.zeros(2))
         self.unit_cell = Hexagon(2 / (3 * f), init_rot, np.zeros(2))
-        # self.inner_hexagon = Hexagon(f / np.sqrt(3), init_rot - 30, np.zeros(2))
         # init trainable phases
         phases = self.unit_cell.sample(
             ncells, seed
