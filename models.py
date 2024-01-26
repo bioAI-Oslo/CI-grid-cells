@@ -33,29 +33,29 @@ class LinDecoder(HexagonalGCs):
                 torch.concatenate((a, b, c, d, e, f, g), 0), (1, 0)
             )
 
-    #def loss_fn(self, pos):
-    #    pos *= self.pos_scale
-    #    activity = self(pos)
-    #    if self.least_squares:
-    #        self.xyweights = torch.linalg.lstsq(activity, pos).solution
-        #            self.xyweights = torch.linalg.pinv(activity) @ pos
-    #    decode_pos = torch.matmul(activity, self.xyweights)
-    #    if self.hex_metric:
-    #        diffall = torch.zeros(7, len(pos))
-    #        for i in range(7):
-    #            diffall[i] = torch.sum(
-    #                torch.square((decode_pos + self.addition[i]) - pos), 1
-    #            )
-    #        return torch.sum(torch.min(diffall, 0).values)
-    #    else:
-    #        return torch.sum(torch.square(decode_pos - pos))
-
     def loss_fn(self, pos):
         pos *= self.pos_scale
         activity = self(pos)
-        xyweights = torch.linalg.pinv(activity) @ pos
-        decode_pos = torch.matmul(activity, xyweights)
-        return torch.sum(torch.square(decode_pos - pos))
+        if self.least_squares:
+            self.xyweights = torch.linalg.lstsq(activity, pos).solution
+                    # self.xyweights = torch.linalg.pinv(activity) @ pos
+        decode_pos = torch.matmul(activity, self.xyweights)
+        if self.hex_metric:
+            diffall = torch.zeros(7, len(pos))
+            for i in range(7):
+                diffall[i] = torch.sum(
+                    torch.square((decode_pos + self.addition[i]) - pos), 1
+                )
+            return torch.sum(torch.min(diffall, 0).values)
+        else:
+            return torch.sum(torch.square(decode_pos - pos))
+
+    # def loss_fn(self, pos):
+    #     pos *= self.pos_scale
+    #     activity = self(pos)
+    #     xyweights = torch.linalg.pinv(activity) @ pos
+    #     decode_pos = torch.matmul(activity, xyweights)
+    #     return torch.sum(torch.square(decode_pos - pos))
 
 
 class Similitude(HexagonalGCs):
