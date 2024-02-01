@@ -38,7 +38,7 @@ class LinDecoder(HexagonalGCs):
         activity = self(pos)
         if self.least_squares:
             self.xyweights = torch.linalg.lstsq(activity, pos).solution
-        #            self.xyweights = torch.linalg.pinv(activity) @ pos
+                    # self.xyweights = torch.linalg.pinv(activity) @ pos
         decode_pos = torch.matmul(activity, self.xyweights)
         if self.hex_metric:
             diffall = torch.zeros(7, len(pos))
@@ -50,12 +50,12 @@ class LinDecoder(HexagonalGCs):
         else:
             return torch.sum(torch.square(decode_pos - pos))
 
-    def loss_fn2(self, pos):
-        pos *= self.pos_scale
-        activity = self(pos)
-        xyweights = torch.linalg.pinv(activity) @ pos
-        decode_pos = torch.matmul(activity, xyweights)
-        return torch.sum(torch.square(decode_pos - pos))
+    # def loss_fn(self, pos):
+    #     pos *= self.pos_scale
+    #     activity = self(pos)
+    #     xyweights = torch.linalg.pinv(activity) @ pos
+    #     decode_pos = torch.matmul(activity, xyweights)
+    #     return torch.sum(torch.square(decode_pos - pos))
 
 
 class Similitude(HexagonalGCs):
