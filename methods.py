@@ -205,6 +205,20 @@ class Hexagon:
         # ax.set_aspect("equal")
         return fig, ax
 
+    def plot_rhombus(self, fig=None, ax=None, center=None, colors=None, **kwargs):
+        if ax is None:
+            fig, ax = plt.subplots()
+        center = self.center if center is None else center
+        hpoints = self.hpoints + center
+        for i in range(len(hpoints)):
+            line_segment = np.stack([hpoints[i], hpoints[(i + 1) % 6]])
+            if not (colors is None):
+                ax.plot(*line_segment.T, color=colors[i], **kwargs)
+            else:
+                ax.plot(*line_segment.T, **kwargs)
+        # ax.set_aspect("equal")
+        return fig, ax
+
 
 class HexagonalGCs(torch.nn.Module):
     """
