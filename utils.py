@@ -164,3 +164,22 @@ def find_peaks(image):
     distances = np.linalg.norm(peaks - center, axis=1)
     peaks = peaks[distances.argsort()]
     return peaks
+
+def hex_radius(model, phases=None):
+    if phases is None:
+        phases = model.phases.detach().numpy()
+    cdists = np.stack([model.unit_cell.geodesic(phases[i:i+1],phases) for i in range(len(phases))])
+    off_diag_mask = ~np.eye(cdists.shape[0],dtype=bool)
+    return np.mean(cdists[off_diag_mask]), np.std(cdists[off_diag_mask])
+
+def hex_orientation(model, phases=None, degrees=True):
+    if phases is None:
+        phases = model.phases.detach().numpy()
+    # mirror x and y since arctan2 takes y as first argument and x as second
+    angles = np.stack([np.arctan2(*(model.unit_cell.wrap(phases - phases[i]))[:,::-1].T) 
+                       for i in range(len(phases))])
+    # modulo 60 degrees
+    angles = angles % (np.pi/3)
+    angles = angles * 180/np.pi if degrees else angles
+    off_diag_mask = ~np.eye(phases.shape[0],dtype=bool)
+    return np.mean(angles[off_diag_mask]), np.std(angles[off_diag_mask]) 

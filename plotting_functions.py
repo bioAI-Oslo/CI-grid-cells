@@ -101,7 +101,7 @@ def plot_samples_and_tiling(gridmodule, ratemaps, ratemap_examples=0, **kwargs):
     return fig, axs
 
 
-def barcode_plot(diagram, dims=2, norm_ax=0):
+def barcode_plot(diagram, dims=2, norm_ax=0, fig=None):
     results = {}
     if norm_ax == 0:
         largest_pers = 0
@@ -119,21 +119,23 @@ def barcode_plot(diagram, dims=2, norm_ax=0):
         bar_lens = curr_h[:, 1] - curr_h[:, 0]
         plot_h = curr_h[bar_lens >= np.percentile(bar_lens, cutoff)]
         to_plot.append(plot_h)
-    fig = plt.figure(figsize=(3, 1.25))
+    fig = plt.figure(figsize=(2, 1.25/3*dims)) if fig is None else fig
     gs = gridspec.GridSpec(dims, 4)
     for curr_betti, curr_bar in enumerate(to_plot):
         ax = fig.add_subplot(gs[curr_betti, :])
         for i, interval in enumerate(reversed(curr_bar)):
             plt.plot([interval[0], interval[1]], [i, i], color=clrs[curr_betti], lw=1.5)
+        ax.set_ylabel(f"H$^{curr_betti}$", rotation=0, labelpad=10)
         if curr_betti == dims - 1:
             ax.set_xlim([0, largest_pers + 0.01])
-            ax.set_ylim([-1, len(curr_bar)])
+            ax.set_ylim([-0.15*len(curr_bar), len(curr_bar)])
             ax.set_yticks([])
         else:
             ax.set_xlim([0, largest_pers + 0.01])
             ax.set_xticks([])
-            ax.set_ylim([-1, len(curr_bar)])
+            ax.set_ylim([-0.15*len(curr_bar), len(curr_bar)])
             ax.set_yticks([])
+    return fig, ax
 
 
 """ Draws circles around the points of a point cloud, first dimension contains the number of points """
@@ -246,3 +248,22 @@ def colorbar_axis(fig, ax, im):
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
     fig.colorbar(im, cax=cax, orientation='vertical')
+
+
+def multiimshow(zz, figsize=(1,1), normalize=True, add_colorbar=True, rect=(0,0,1,0.87), axes_pad=0.05, **kwargs):
+    # prepare figure
+    ncols = int(np.ceil(np.sqrt(zz.shape[0])))
+    nrows = int(round(np.sqrt(zz.shape[0])))
+    from mpl_toolkits.axes_grid1 import ImageGrid
+    fig = plt.figure(figsize=figsize)
+    if add_colorbar and normalize:
+        grid = ImageGrid(fig, rect=rect, nrows_ncols=(nrows, ncols), axes_pad=axes_pad, cbar_mode='single', cbar_location='right', cbar_pad=0.1, cbar_size='5%')
+    else:
+        grid = ImageGrid(fig, rect=rect, nrows_ncols=(nrows, ncols), axes_pad=axes_pad)
+    vmin, vmax = (np.nanmin(zz), np.nanmax(zz)) if normalize else (None, None)
+    # plot response maps using imshow
+    for ax, data in zip(grid, zz):
+        im = ax.imshow(data, vmin=vmin, vmax=vmax, **kwargs)
+    [ax.axis('off') for ax in grid]
+    fig.colorbar(im, cax=grid.cbar_axes[0]) if (normalize and add_colorbar) else None
+    return fig, grid.axes_all

@@ -437,6 +437,16 @@ class HexagonalGCs(torch.nn.Module):
         self.optimizer.step()
         return loss.item()
 
+    def train_model(self, nsamples_space=256, ntrain_steps=5000, dtype = torch.float32):
+        loss_history = []
+        for _ in tqdm.trange(ntrain_steps):
+            rs = self.unit_cell.sample(nsamples_space)
+            rs = torch.tensor(rs,dtype=dtype)
+            loss = self.train_step(rs)
+            loss_history.append(loss)
+        loss_history = np.array(loss_history)
+        return loss_history
+
     def phase_kde(
         self,
         phases=None,
